@@ -2,44 +2,9 @@
 
 Painel lateral para o [Claude Code](https://claude.com/claude-code) que mostra, ao vivo, o que a sessão está fazendo e quanto está custando, com visual cyberpunk.
 
-```
-◢◤ NEON//HUD                        ● STREAMING
-opus-5-5  ·  00:09:48  ·  2 turns  ·  8 req
-
-╭──────────────────────────────────────────╮
-│ ◆ THROUGHPUT           avg 98 · peak 147 │
-│ 146.8 tok/s                              │
-│ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▃▅▆▇█▇▆▇█▇ │
-╰──────────────────────────────────────────╯
-╭──────────────────────────────────────────╮
-│ CONTEXT                              15% │
-│ ━━━━━━─────────────────────────────────  │
-│ 153.0k of 1.00M tokens                   │
-╰──────────────────────────────────────────╯
-╭──────────────────────────────────────────╮
-│ TOKENS                     cache hit 98% │
-│ INPUT              OUTPUT                │
-│ 16                 11.3k                 │
-│ CACHE READ         CACHE WRITE           │
-│ 1.14M              27.4k                 │
-╰──────────────────────────────────────────╯
-╭──────────────────────────────────────────╮
-│ SPEND                       this session │
-│ $2.41 USD                                │
-│ 5H  ━───────────────────────   2% ↻4h57m │
-│ 7D  ━━━━━━━━━━━━━━━━━━━━───── 76% ↻22h47m│
-╰──────────────────────────────────────────╯
-╭──────────────────────────────────────────╮
-│ AGENTS                          0 active │
-│ No agents running                        │
-╰──────────────────────────────────────────╯
-╭──────────────────────────────────────────╮
-│ TOOLS                            7 calls │
-│ Bash          ━━━━━━━━━━━━━━━━━━━━━    6 │
-│ Read          ━━━━───────────────────  1 │
-│ recent ✓Bash ✓Read ✓Bash ✓Bash           │
-╰──────────────────────────────────────────╯
-```
+<p align="center">
+  <img src="docs/screenshot.png" alt="Painel NEON//HUD durante o streaming: throughput, contexto, tokens, custo, agentes e ferramentas" width="420">
+</p>
 
 ## O que ele mostra
 
