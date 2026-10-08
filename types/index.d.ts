@@ -44,6 +44,21 @@ export type HudVitals = {
   agents: HudAgent[]
 }
 
+export type HudTurn = {
+  startedAt: number
+  costAtStart: number
+  lastMs: number
+  lastCostUsd: number
+}
+
+export type HudSaved = {
+  savedAt: number
+  live: HudLive
+  tokens: HudTokens
+  tools: HudTools
+  turn: HudTurn
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'neon-hud': {
@@ -51,6 +66,7 @@ declare module 'claude-code' {
       tokens: HudTokens
       tools: HudTools
       vitals: HudVitals
+      turn: HudTurn
     }
   }
 }

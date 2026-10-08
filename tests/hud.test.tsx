@@ -51,3 +51,11 @@ test('nenhuma linha passa da largura util do painel', async ($, on) => {
     await ui.unmount()
   }
 })
+
+test('chamadas repetidas aparecem agrupadas em recent', async ($, on) => {
+  on('tool.call', () => ({ result: { file: { content: '' } }, text: 'ok' }) as never)
+  for (let i = 0; i < 3; i++) await $.tool.call({ tool: 'Read', file_path: '/tmp/x.md' })
+  const ui = await $.ui.mount({ plugin: 'neon-hud', surface: 'terminal', ...PANE })
+  expect(await ui.find({ type: 'Text', text: /recent ✓Read×3/ })).toBeDefined()
+  await ui.unmount()
+})

@@ -10,13 +10,13 @@ Painel lateral para o [Claude Code](https://claude.com/claude-code) que mostra, 
 
 | Seção | Conteúdo |
 | --- | --- |
-| Cabeçalho | Fase atual (`STANDBY`, `SENDING`, `THINKING`, `STREAMING`, `RUNNING`), modelo, tempo de sessão, turnos e requisições |
+| Cabeçalho | Fase atual (`STANDBY`, `SENDING`, `THINKING`, `STREAMING`, `RUNNING`), modelo, tempo de sessão, turnos e requisições; durante o turno, um cronômetro e a ferramenta em execução; depois, a duração e o custo do último turno |
 | **Throughput** | Tokens por segundo (estimado durante o streaming, exato ao fim de cada requisição), média, pico e histórico das últimas 60 requisições |
 | **Context** | Ocupação da janela de contexto; a barra fica verde, amarela ou vermelha conforme enche |
 | **Tokens** | Entrada, saída, leitura e escrita de cache, somando a sessão principal e os subagentes, mais a taxa de acerto de cache |
-| **Spend** | Custo da sessão em US$ (o mesmo valor do `/cost`) e os limites de 5h e 7d do plano, com o tempo até cada reset |
+| **Spend** | Custo da sessão em US$ (o mesmo valor do `/cost`), custo médio por turno e por hora, e os limites de 5h e 7d do plano, com o tempo até cada reset |
 | **Agents** | Subagentes da sessão, com tipo, status e descrição |
-| **Tools** | Total de chamadas, as ferramentas mais usadas e as últimas chamadas (`✓` ok, `✗` erro, `⟳` rodando) |
+| **Tools** | Total de chamadas, as ferramentas mais usadas e as últimas chamadas agrupadas (`✓Bash×5`; `✓` ok, `✗` erro, `⟳` rodando) |
 
 O cartão que está em atividade acende em ciano: Throughput durante o streaming, Agents com agente rodando, Tools com ferramenta em execução.
 
@@ -65,7 +65,7 @@ claude plugin uninstall neon-hud@neon-hud
 
 ## Observações
 
-- Os contadores de tokens, requisições e tok/s começam quando o mod carrega. Se você instalar no meio de uma sessão, eles contam a partir dali. Custo, contexto, modelo e turnos sempre mostram o valor real desde o início da sessão.
+- Os contadores de tokens, requisições e tok/s ficam salvos por sessão: sobrevivem a reload do mod, a reiniciar o Claude Code e a `--resume`, e zeram no `/clear`. Se você instalar no meio de uma sessão, eles contam a partir dali. Custo, contexto, modelo e turnos sempre mostram o valor real desde o início da sessão.
 - Os limites de 5h e 7d só aparecem em planos de assinatura que informam esses limites.
 - O mod só observa a sessão: nunca bloqueia nem altera prompts ou chamadas de ferramenta.
 

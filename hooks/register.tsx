@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, RenderChildren } from 'claude-code'
 
-import type { HudAgent, HudLive, HudPhase, HudTokens, HudTools, HudVitals } from '../types'
+import type { HudAgent, HudLive, HudPhase, HudSaved, HudTokens, HudTools, HudTurn, HudVitals } from '../types'
 
 const PANE = 'neon-hud'
 const TITLE = 'NEON//HUD'
@@ -59,6 +59,16 @@ const vitals = atom({ plugin: 'neon-hud', key: 'vitals' } as const, {
   agents: [],
 } as HudVitals)
 
+const turn = atom({ plugin: 'neon-hud', key: 'turn' } as const, {
+  startedAt: 0,
+  costAtStart: 0,
+  lastMs: 0,
+  lastCostUsd: 0,
+} as HudTurn)
+
+const STORE_PREFIX = 'session:'
+const STORE_KEEP = 30
+
 const SPARK = '▁▂▃▄▅▆▇█'
 
 function fmt(n: number): string {
@@ -81,9 +91,35 @@ function heat(pct: number): string {
 
 function spark(values: number[], width: number): [string, string] {
   const tail = values.slice(-width)
-  const max = Math.max(1, ...tail)
-  const bars = tail.map(v => SPARK[Math.min(7, Math.max(1, Math.round((v / max) * 7)))]).join('')
-  return ['▁'.repeat(width - tail.length), bars]
+  const lo = Math.min(...tail)
+  const hi = Math.max(...tail)
+  const range = hi - lo
+  const level = (v: number) => (range < 1 ? 4 : 1 + Math.round(((v - lo) / range) * 6))
+  return ['▁'.repeat(width - tail.length), tail.map(v => SPARK[level(v)]).join('')]
+}
+
+function seconds(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000))
+  return s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s` : `${s}s`
+}
+
+function money(usd: number): string {
+  return usd >= 10 ? `$${usd.toFixed(1)}` : `$${usd.toFixed(2)}`
+}
+
+type Recent = HudTools['recent'][number]
+
+function grouped(recent: Recent[]): { tool: string; mark: string; color: string; n: number }[] {
+  const out: { tool: string; mark: string; color: string; n: number }[] = []
+  for (const c of recent.slice().reverse()) {
+    const tool = c.tool.split('__').pop() ?? c.tool
+    const mark = !c.isDone ? '⟳' : c.isError ? '✗' : '✓'
+    const color = !c.isDone ? C.amber : c.isError ? C.red : C.dim
+    const last = out[out.length - 1]
+    if (last && last.tool === tool && last.mark === mark) last.n += 1
+    else out.push({ tool, mark, color, n: 1 })
+  }
+  return out
 }
 
 function clock(ms: number): string {
@@ -139,6 +175,33 @@ export const register: Register = on => {
       description: 'Abre o painel NEON//HUD com o status da sessao',
     })
 
+    const restored = await $.store.get(`${STORE_PREFIX}${await $.session.id()}`)
+    const held = await read($, tokens)
+    if (restored && held.steps === 0) {
+      const saved = restored as HudSaved
+      await update($, live, (): HudLive => ({ ...saved.live, phase: 'IDLE', detail: '', liveTps: 0 }))
+      await update($, tokens, () => saved.tokens)
+      await update($, tools, () => ({ ...saved.tools, recent: saved.tools.recent.filter(c => c.isDone) }))
+      await update($, turn, () => ({ ...saved.turn, startedAt: 0 }))
+    }
+
+    let lastSaved = ''
+    $.clock.every(1500, async () => {
+      const [id, l, t, tl, tn] = await Promise.all([$.session.id(), read($, live), read($, tokens), read($, tools), read($, turn)])
+      const body = JSON.stringify([l.tpsHistory, t, tl, tn.lastMs])
+      if (t.steps > 0 && body !== lastSaved) {
+        lastSaved = body
+        const saved: HudSaved = { savedAt: await $.clock.now(), live: l, tokens: t, tools: tl, turn: tn }
+        await $.store.set(`${STORE_PREFIX}${id}`, saved)
+        const keys = (await $.store.keys()).filter(k => k.startsWith(STORE_PREFIX))
+        if (keys.length > STORE_KEEP) {
+          const aged = await Promise.all(keys.map(async k => ({ k, at: ((await $.store.get(k)) as HudSaved | undefined)?.savedAt ?? 0 })))
+          aged.sort((a, b) => a.at - b.at)
+          await Promise.all(aged.slice(0, keys.length - STORE_KEEP).map(a => $.store.delete(a.k)))
+        }
+      }
+    })
+
     $.clock.every(1500, async () => {
       const [usage, agents, now, model, turns] = await Promise.all([
         $.session.usage(),
@@ -169,6 +232,17 @@ export const register: Register = on => {
     return next(e)
   })
 
+  on('session.end', async ($, e, next) => {
+    if (e.reason === 'clear') {
+      await update($, live, (s): HudLive => ({ ...s, phase: 'IDLE', detail: '', liveTps: 0, lastTps: 0, peakTps: 0, tpsHistory: [] }))
+      await update($, tokens, () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, steps: 0, turns: 0 }))
+      await update($, tools, () => ({ total: 0, counts: {}, recent: [] }))
+      await update($, turn, () => ({ startedAt: 0, costAtStart: 0, lastMs: 0, lastCostUsd: 0 }))
+    }
+
+    return next(e)
+  })
+
   on('command.run', { command: 'hud' }, async $ => {
     await $.ui.open({ id: PANE, title: TITLE, columns: WIDTH })
 
@@ -176,6 +250,8 @@ export const register: Register = on => {
   })
 
   on('turn.start', async ($, e, next) => {
+    const [now, usage] = await Promise.all([$.clock.now(), $.session.usage()])
+    await update($, turn, s => ({ ...s, startedAt: now, costAtStart: usage.cost?.usd ?? 0 }))
     await update($, live, (s): HudLive => ({ ...s, phase: 'UPLINK', detail: '', liveTps: 0 }))
     await update($, tokens, t => ({ ...t, turns: t.turns + 1 }))
 
@@ -241,7 +317,7 @@ export const register: Register = on => {
     await update($, tools, t => ({
       total: t.total + 1,
       counts: { ...t.counts, [tool]: (t.counts[tool] ?? 0) + 1 },
-      recent: [...t.recent, { id, tool, isDone: false, isError: false }].slice(-6),
+      recent: [...t.recent, { id, tool, isDone: false, isError: false }].slice(-24),
     }))
     if (e.agentId === undefined) {
       await update($, live, (s): HudLive => ({ ...s, phase: 'EXEC', detail: tool }))
@@ -259,16 +335,22 @@ export const register: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     if (e.agentId === undefined) {
+      const usage = await $.session.usage()
+      await update($, turn, s => ({
+        startedAt: 0,
+        costAtStart: s.costAtStart,
+        lastMs: e.durationMs,
+        lastCostUsd: Math.max(0, (usage.cost?.usd ?? 0) - s.costAtStart),
+      }))
       await update($, live, (s): HudLive => ({ ...s, phase: 'IDLE', detail: '', liveTps: 0 }))
     }
 
     return next(e)
   })
 
-
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
-    const [l, t, tl, v] = await Promise.all([read($, live), read($, tokens), read($, tools), read($, vitals)])
+    const [l, t, tl, v, tn] = await Promise.all([read($, live), read($, tokens), read($, tools), read($, vitals), read($, turn)])
     const w = Math.max(28, e.props.bodyColumns)
     const iw = w - 6
     const half = Math.floor(iw / 2)
@@ -304,6 +386,9 @@ export const register: Register = on => {
     const [ctxOn, ctxOff] = meter(v.contextPercent, iw)
     const avgTps = l.tpsHistory.length ? l.tpsHistory.reduce((a, b) => a + b, 0) / l.tpsHistory.length : 0
     const [sparkPad, sparkBars] = spark(l.tpsHistory, iw)
+    const hours = (v.now - v.startedAt) / 3_600_000
+    const perHour = hours > 0.02 ? v.costUsd / hours : 0
+    const perTurn = v.turns > 0 ? v.costUsd / v.turns : 0
     const topTools = Object.entries(tl.counts)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 6)
@@ -334,9 +419,22 @@ export const register: Register = on => {
           {'  ·  '}
           {t.steps} req
         </Text>
-        <Text color={C.amber} wrap="truncate-end">
-          {l.phase === 'EXEC' && l.detail ? `› ${l.detail}` : ' '}
-        </Text>
+        {tn.startedAt > 0 ? (
+          <Text color={C.dim} wrap="truncate-end">
+            turn <Text color={C.text}>{seconds(v.now - tn.startedAt)}</Text>
+            <Text color={C.amber}>{l.phase === 'EXEC' && l.detail ? `  › ${l.detail}` : ''}</Text>
+          </Text>
+        ) : (
+          <Text color={C.dim} wrap="truncate-end">
+            {tn.lastMs > 0 ? (
+              <Text>
+                last turn <Text color={C.text}>{seconds(tn.lastMs)}</Text> · <Text color={C.text}>{money(tn.lastCostUsd)}</Text>
+              </Text>
+            ) : (
+              ' '
+            )}
+          </Text>
+        )}
 
         {card(
           'THROUGHPUT',
@@ -396,7 +494,9 @@ export const register: Register = on => {
         {card(
           'SPEND',
           false,
-          <Text color={C.dim}>this session</Text>,
+          <Text color={C.dim}>
+            <Text color={C.text}>{money(perTurn)}</Text>/turn · <Text color={C.text}>{money(perHour)}</Text>/h
+          </Text>,
           <Box flexDirection="column">
             <Text>
               <Text color={C.amber} bold>
@@ -461,15 +561,13 @@ export const register: Register = on => {
             {tl.recent.length > 0 && (
               <Text wrap="truncate-end">
                 <Text color={C.dim}>recent </Text>
-                {tl.recent
-                  .slice()
-                  .reverse()
-                  .map(c => (
-                    <Text color={!c.isDone ? C.amber : c.isError ? C.red : C.dim}>
-                      {!c.isDone ? '⟳' : c.isError ? '✗' : '✓'}
-                      {c.tool.split('__').pop()}{' '}
-                    </Text>
-                  ))}
+                {grouped(tl.recent).map(g => (
+                  <Text color={g.color}>
+                    {g.mark}
+                    {g.tool}
+                    {g.n > 1 ? <Text color={C.line}>×{g.n}</Text> : ''}{' '}
+                  </Text>
+                ))}
               </Text>
             )}
           </Box>,
