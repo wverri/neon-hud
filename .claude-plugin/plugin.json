@@ -1,0 +1,20 @@
+{
+  "name": "neon-hud",
+  "version": "0.3.0",
+  "description": "Painel lateral cyberpunk para o Claude Code: tokens/s, contexto, tokens, custo, limites, agentes e ferramentas da sessao, ao vivo",
+  "author": {
+    "name": "wverri"
+  },
+  "homepage": "https://github.com/wverri/neon-hud",
+  "repository": "https://github.com/wverri/neon-hud",
+  "license": "MIT",
+  "keywords": [
+    "hud",
+    "statusline",
+    "pane",
+    "tokens",
+    "cost",
+    "cyberpunk"
+  ],
+  "types": "./types/index.d.ts"
+}

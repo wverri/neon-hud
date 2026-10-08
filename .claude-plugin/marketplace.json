@@ -1,0 +1,14 @@
+{
+  "name": "neon-hud",
+  "description": "Marketplace do NEON//HUD, painel de status da sessao para o Claude Code",
+  "owner": {
+    "name": "wverri"
+  },
+  "plugins": [
+    {
+      "name": "neon-hud",
+      "source": "./",
+      "description": "Painel lateral cyberpunk para o Claude Code: tokens/s, contexto, tokens, custo, limites, agentes e ferramentas da sessao, ao vivo"
+    }
+  ]
+}
