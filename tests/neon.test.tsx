@@ -42,6 +42,23 @@ test('render false devolve a resposta ao engine e o painel continua', { options:
   await pane.unmount()
 })
 
+test('com o prismantis instalado, o neon-hud deixa ele desenhar', async ($, on) => {
+  on('engine.create', async (_$, e, next) => ({ ...(await next(e)), prismantis: { markdown: async () => undefined } }) as never)
+  const native = countNative(on)
+  await startSession($, on)
+  const ui = await $.ui.mount(reply('| a |\n|---|\n| 1 |'))
+  expect(native.n).toBe(1)
+  await ui.unmount()
+})
+
+test('sem o prismantis, o neon-hud desenha a resposta', async ($, on) => {
+  const native = countNative(on)
+  await startSession($, on)
+  const ui = await $.ui.mount(reply('| a |\n|---|\n| 1 |'))
+  expect(native.n).toBe(0)
+  await ui.unmount()
+})
+
 test('uma resposta so com espacos fica com o engine', async ($, on) => {
   const native = countNative(on)
   const ui = await $.ui.mount(reply('   \n  '))

@@ -281,8 +281,22 @@ const probe = async ($: EngineInterface, style: Style, probes: Probes) => {
   style.htmlCopy = await probes.htmlCopy
 }
 
-// Preenchida na Task 7; por ora o neon-hud sempre desenha.
-const prismantisActive = (_$: EngineInterface): boolean => false
+// O prismantis publica $.prismantis, mas o loader proibe ler $.noun como valor; so $.noun.evento(...) passa.
+// Entao a deteccao chama o evento mais barato dele: se resolve, ele esta instalado; se lanca, nao esta.
+type Prismantis = { found?: boolean }
+type PrismantisHost = { prismantis: { markdown: (args: { surface: 'terminal'; text: string; columns: number }) => Promise<unknown> } }
+
+const prismantisActive = async ($: EngineInterface, cache: Prismantis): Promise<boolean> => {
+  if (cache.found !== undefined) return cache.found
+  cache.found = false
+  try {
+    await ($ as unknown as PrismantisHost).prismantis.markdown({ surface: 'terminal', text: '', columns: 80 })
+    cache.found = true
+  } catch {
+    cache.found = false
+  }
+  return cache.found
+}
 
 const expandedCalls = new Set<string>()
 const readOnlyCalls = new Set<string>()
@@ -301,6 +315,7 @@ export const register: Register = (on, options: PluginOptions) => {
   const parseCached = (text: string) => remember(parsed, text, () => parse(text, { numbers: style.highlightNumbers, paths: style.highlightPaths }))
   const forSurface = (base: Style, surface: RenderSurface): Style => (surface === 'terminal' || !base.htmlCopy ? base : { ...base, htmlCopy: null })
   const probes: Probes = {}
+  const prismantis: Prismantis = {}
 
   on('session.start', async ($, e, next) => {
     await $.command
@@ -318,6 +333,7 @@ export const register: Register = (on, options: PluginOptions) => {
         probes.htmlCopy = undefined
         style.htmlCopy = null
       })
+      await prismantisActive($, prismantis)
       void latexEngine($, latex)
       await $.command
         .register({ name: 'neon-hud', description: 'Copia a ultima resposta ou o ultimo bloco de codigo', argumentHint: '[copy [code]]' })
@@ -532,7 +548,7 @@ export const register: Register = (on, options: PluginOptions) => {
   if (!rendering) return
 
   on('ui.render', { component: 'TurnDuration' }, async ($, e, next) => {
-    if (prismantisActive($)) return next(e)
+    if (await prismantisActive($, prismantis)) return next(e)
     const at = style.clock === 'off' ? undefined : endedAt(await read($, turnEnds), e.props.durationMs, await firstDrawn($, e.requestId))
     const time = at === undefined ? undefined : clockText(at, await $.clock.now(), style.clock)
     return renderTurnDuration($.ui.resolve(e), style, e.props.word, e.props.durationMs, time)
@@ -541,7 +557,7 @@ export const register: Register = (on, options: PluginOptions) => {
   const quiet = style.toolOutput === 'quiet'
   if (options.toolRows !== false) {
     on('ui.render', { component: 'ToolGroup' }, async ($, e, next) => {
-      if (prismantisActive($)) return next(e)
+      if (await prismantisActive($, prismantis)) return next(e)
       await locate($, style)
       if (quiet) for (const call of e.props.calls) if (call.tool_use_id && isReadOnlyCall(call.tool, call.input)) rememberCall(readOnlyCalls, call.tool_use_id)
       if (e.props.isExpanded) {
@@ -551,14 +567,14 @@ export const register: Register = (on, options: PluginOptions) => {
       return renderToolGroup($.ui.resolve(e), style, e.props.calls, e.props.isActive, e.viewport?.columns)
     })
     on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
-      if (prismantisActive($)) return next(e)
+      if (await prismantisActive($, prismantis)) return next(e)
       await locate($, style)
       if (quiet && isReadOnlyCall(e.props.tool, e.props.input)) rememberCall(readOnlyCalls, e.props.tool_use_id)
       if (!expandedCalls.has(e.props.tool_use_id)) return renderToolRow($.ui.resolve(e), style, e.props, e.viewport?.columns)
       return e.props.tool === 'Bash' || e.props.tool === 'PowerShell' ? renderExpandedShell($.ui.resolve(e), style, e.props) : next(e)
     })
     on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
-      if (prismantisActive($)) return next(e)
+      if (await prismantisActive($, prismantis)) return next(e)
       if ((e.props.tool === 'Edit' || e.props.tool === 'Write') && !e.props.isErrored) {
         const el = $.ui.resolve(e)
         return renderDiffCard(el, style, e.props.output, folder($, el, await read($, unfolded)), e.props.tool_use_id) ?? next(e)
@@ -587,7 +603,7 @@ export const register: Register = (on, options: PluginOptions) => {
   })
 
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
-    if (prismantisActive($)) return next(e)
+    if (await prismantisActive($, prismantis)) return next(e)
     try {
       const blocks = parseCached(e.props.text)
       if (blocks.length === 0) return next(e)
