@@ -10,7 +10,7 @@ import { pickFormula } from './render/latex'
 import { parse } from './render/markdown'
 import { boxArt, mermaidText, shortenEdgeLabels, unsupportedKind } from './render/mermaid'
 import type { Drawn, Fold } from './render/render'
-import { remember, renderBlocks, width } from './render/render'
+import { isReadOnlyCall, remember, rememberCall, renderBlocks, renderDiffCard, renderExpandedShell, renderFailure, renderShellResult, renderToolGroup, renderToolRow, width } from './render/render'
 import { hasRtl } from './render/rtl'
 import type { Style } from './render/theme'
 import { resolveStyle } from './render/theme'
@@ -162,6 +162,15 @@ const probe = async ($: EngineInterface, style: Style, probes: Probes) => {
 
 // Preenchida na Task 7; por ora o neon-hud sempre desenha.
 const prismantisActive = (_$: EngineInterface): boolean => false
+
+const expandedCalls = new Set<string>()
+const readOnlyCalls = new Set<string>()
+
+const markExpanded = (id: string) => {
+  expandedCalls.delete(id)
+  expandedCalls.add(id)
+  if (expandedCalls.size > 500) expandedCalls.delete(expandedCalls.values().next().value!)
+}
 
 export const register: Register = (on, options: PluginOptions) => {
   const rendering = options.render !== false
@@ -394,6 +403,43 @@ export const register: Register = (on, options: PluginOptions) => {
   })
 
   if (!rendering) return
+
+  const quiet = style.toolOutput === 'quiet'
+  if (options.toolRows !== false) {
+    on('ui.render', { component: 'ToolGroup' }, async ($, e, next) => {
+      if (prismantisActive($)) return next(e)
+      await locate($, style)
+      if (quiet) for (const call of e.props.calls) if (call.tool_use_id && isReadOnlyCall(call.tool, call.input)) rememberCall(readOnlyCalls, call.tool_use_id)
+      if (e.props.isExpanded) {
+        for (const call of e.props.calls) if (call.tool_use_id) markExpanded(call.tool_use_id)
+        return next(e)
+      }
+      return renderToolGroup($.ui.resolve(e), style, e.props.calls, e.props.isActive, e.viewport?.columns)
+    })
+    on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
+      if (prismantisActive($)) return next(e)
+      await locate($, style)
+      if (quiet && isReadOnlyCall(e.props.tool, e.props.input)) rememberCall(readOnlyCalls, e.props.tool_use_id)
+      if (!expandedCalls.has(e.props.tool_use_id)) return renderToolRow($.ui.resolve(e), style, e.props, e.viewport?.columns)
+      return e.props.tool === 'Bash' || e.props.tool === 'PowerShell' ? renderExpandedShell($.ui.resolve(e), style, e.props) : next(e)
+    })
+    on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
+      if (prismantisActive($)) return next(e)
+      if ((e.props.tool === 'Edit' || e.props.tool === 'Write') && !e.props.isErrored) {
+        const el = $.ui.resolve(e)
+        return renderDiffCard(el, style, e.props.output, folder($, el, await read($, unfolded)), e.props.tool_use_id) ?? next(e)
+      }
+      if (!quiet) return next(e)
+      await locate($, style)
+      const el = $.ui.resolve(e)
+      const shell = e.props.tool === 'Bash' || e.props.tool === 'PowerShell'
+      const out = (e.props.output ?? {}) as Record<string, unknown>
+      if (shell && (out.backgroundTaskId || out.isImage || out.interrupted)) return next(e)
+      if (e.props.isErrored) return renderFailure(el, style, e.props.output) ?? next(e)
+      if (readOnlyCalls.has(e.props.tool_use_id)) return <el.Box />
+      return shell ? renderShellResult(el, style, e.props.output) : next(e)
+    })
+  }
 
   on('command.run', { command: 'neon-hud' }, async ($, e) => {
     const [sub, arg] = e.args.trim().split(/\s+/)

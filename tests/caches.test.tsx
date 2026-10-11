@@ -1,17 +1,6 @@
-import { expect, mock, test } from 'claude-code/testing'
+import { expect, test } from 'claude-code/testing'
 
 import { remember } from '../hooks/render/render'
-
-const mount = (text: string, isFullscreen = false) => ({
-  plugin: 'neon-hud',
-  component: 'AssistantMessage' as const,
-  props: { text, isFirstOfReply: true },
-  viewport: { columns: 120, rows: 40, isFullscreen },
-  surface: 'terminal' as const,
-})
-
-const drawn = (node: unknown): string =>
-  typeof node === 'string' ? node : ((node as { children?: unknown[] }).children ?? []).map(drawn).join('')
 
 test('a cached entry read again outlives newer ones', async () => {
   const cache = new Map<string, string>()
@@ -25,3 +14,21 @@ test('a cached entry read again outlives newer ones', async () => {
 })
 
 const call = (id: string) => ({ tool_use_id: id, tool: 'Read', input: { file_path: '/tmp/x' }, isRunning: false, isErrored: false, isInterrupted: false })
+
+test('only the 500 most recently expanded tool calls stay expanded', async ($, on) => {
+  on('ui.render', ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>engine</Text>
+  })
+  const ids = Array.from({ length: 501 }, (_, i) => `bounded-${i}`)
+  const group = await $.ui.mount({ plugin: 'neon-hud', surface: 'terminal', component: 'ToolGroup', props: { calls: ids.map(call), isActive: false, isExpanded: true } })
+  await group.unmount()
+  const isEngine = async (id: string) => {
+    const ui = await $.ui.mount({ plugin: 'neon-hud', surface: 'terminal', component: 'ToolUse', props: { ...call(id), output: { stdout: 'file' } } })
+    const found = (await ui.find({ type: 'Text', text: /^engine$/ })) !== undefined
+    await ui.unmount()
+    return found
+  }
+  expect(await isEngine('bounded-500')).toBe(true)
+  expect(await isEngine('bounded-0')).toBe(false)
+})

@@ -286,3 +286,30 @@ test('long code blocks fold to 20 lines, open and fold back on press, and copy e
     await ui.unmount()
   }
 })
+
+test('tool rows read like Ran <command> with shell colors', { options: { toolStyle: 'classic' } }, async $ => {
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...toolRow('Bash', { command: 'gh pr view 12 --json state' }), surface })
+    expect((await ui.find({ type: 'Text', text: /^Ran$/ }))?.props.bold).toBe(true)
+    expect((await ui.find({ type: 'Text', text: /^gh$/ }))?.props.color).toBe(NEON.codeCommand)
+    await ui.unmount()
+  }
+})
+
+test('file tools show the path in the path color and failures say so', async $ => {
+  const ui = await $.ui.mount({ ...toolRow('Edit', { file_path: '/tmp/app.ts' }, { isErrored: true }), surface: 'terminal' })
+  expect((await ui.find({ type: 'Text', text: /^Edited$/ }))).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: /^\/tmp\/app\.ts$/ }))?.props.color).toBe(NEON.path)
+  expect((await ui.find({ type: 'Text', text: /failed/ }))).toBeDefined()
+  await ui.unmount()
+})
+
+test('toolRows off leaves tool rows to the engine', { options: { toolRows: false } }, async ($, on) => {
+  on('ui.render', ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>engine</Text>
+  })
+  const ui = await $.ui.mount({ ...toolRow('Bash', { command: 'ls' }), surface: 'terminal' })
+  expect((await ui.find({ type: 'Text', text: /^engine$/ }))).toBeDefined()
+  await ui.unmount()
+})
