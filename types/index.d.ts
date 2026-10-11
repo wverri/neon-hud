@@ -81,7 +81,7 @@ declare module 'claude-code' {
       'render-unfolded': string[]
       'render-turnEnds': { durationMs: number; at: number }[]
       'render-drawn': StateFamily<number>
-      'render-formulas': Record<string, Formula>
+      'render-formulas': Record<string, unknown>
       'render-dir': string
     }
   }

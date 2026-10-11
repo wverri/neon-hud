@@ -43,7 +43,7 @@ test('render false devolve a resposta ao engine e o painel continua', { options:
 })
 
 test('com o prismantis instalado, o neon-hud deixa ele desenhar', async ($, on) => {
-  on('engine.create', async (_$, e, next) => ({ ...(await next(e)), prismantis: { markdown: async () => undefined } }) as never)
+  on('engine.create', async (_$, e, next) => ({ ...(await next(e)), prismantis: { markdown: async ({ text }: { text: string }) => (text ? { drawn: true } : undefined) } }) as never)
   const native = countNative(on)
   await startSession($, on)
   const ui = await $.ui.mount(reply('| a |\n|---|\n| 1 |'))
@@ -52,11 +52,20 @@ test('com o prismantis instalado, o neon-hud deixa ele desenhar', async ($, on) 
 })
 
 test('renders simultaneos antes do session.start esperam a sonda e ficam com o prismantis', async ($, on) => {
-  on('engine.create', async (_$, e, next) => ({ ...(await next(e)), prismantis: { markdown: async () => undefined } }) as never)
+  on('engine.create', async (_$, e, next) => ({ ...(await next(e)), prismantis: { markdown: async ({ text }: { text: string }) => (text ? { drawn: true } : undefined) } }) as never)
   const native = countNative(on)
   const uis = await Promise.all([$.ui.mount(reply('| a |\n|---|\n| 1 |')), $.ui.mount(reply('| b |\n|---|\n| 2 |'))])
   expect(native.n).toBe(2)
   await Promise.all(uis.map((ui) => ui.unmount()))
+})
+
+test('com o prismantis instalado mas desligado, o neon-hud desenha a resposta', async ($, on) => {
+  on('engine.create', async (_$, e, next) => ({ ...(await next(e)), prismantis: { markdown: async () => undefined } }) as never)
+  const native = countNative(on)
+  await startSession($, on)
+  const ui = await $.ui.mount(reply('| a |\n|---|\n| 1 |'))
+  expect(native.n).toBe(0)
+  await ui.unmount()
 })
 
 test('sem o prismantis, o neon-hud desenha a resposta', async ($, on) => {

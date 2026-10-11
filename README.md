@@ -80,7 +80,7 @@ Todas as opções ficam em `~/.claude/settings.json` (ou em `/config`); depois, 
 
 ### Junto com o prismantis
 
-Se o prismantis estiver instalado, as respostas ficam com ele e o neon-hud mostra só o painel. A detecção sonda o `$.prismantis` uma vez por processo; por isso, com o prismantis instalado mas desligado (`enabled: false`), o neon-hud continua cedendo as respostas ao render nativo do Claude Code, porque o `$.prismantis` ainda existe. Desinstale o prismantis se quiser o redesenho do neon-hud. `render: false` desliga o redesenho sem afetar o painel.
+Se o prismantis estiver instalado e ligado, ele desenha as respostas e o neon-hud mostra só o painel. Com o prismantis instalado mas desligado, o neon-hud desenha as respostas normalmente. A verificação se repete quando o mod recarrega. `render: false` desliga o redesenho sem afetar o painel.
 
 ## Requisitos
 

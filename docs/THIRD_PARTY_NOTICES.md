@@ -28,7 +28,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-# Third-party notices
+## Third-party notices
 
 `hooks/render/vendor/mermaid-text.js` is built from [beautiful-mermaid](https://github.com/lukilabs/beautiful-mermaid) 1.1.3.
 
@@ -73,4 +73,4 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 ## Optional system clipboard tools
 
 On Linux, HTML copying calls an installed and running [CopyQ](https://github.com/hluk/CopyQ) (GPL-3.0-or-later).
-CopyQ is supplied by the user's system and is not bundled with prismantis.
+CopyQ is supplied by the user's system and is not bundled with neon-hud.

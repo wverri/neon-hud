@@ -281,9 +281,10 @@ const probe = async ($: EngineInterface, style: Style, probes: Probes) => {
   style.htmlCopy = await probes.htmlCopy
 }
 
-// O prismantis publica $.prismantis, mas o loader proibe ler $.noun como valor; so $.noun.evento(...) passa.
-// Entao a deteccao chama o evento mais barato dele: se resolve, ele esta instalado; se lanca, nao esta.
-// Guarda-se a promessa, nao o booleano: renders simultaneos esperam a mesma resposta. O resultado vale ate o fim do processo.
+// O loader proibe ler $.noun como valor; so $.noun.evento(...) passa. Entao a deteccao chama o evento do prismantis.
+// Texto vazio so diz se ele esta instalado: o base publica o noun mesmo com enabled: false e responde undefined.
+// Por isso uma segunda chamada com texto real separa ativo (devolve um desenho) de desligado (undefined); se ela lancar, assume ativo.
+// Guarda-se a promessa, nao o booleano: renders simultaneos esperam a mesma resposta. A checagem vale por register, ou seja, repete quando o mod recarrega.
 type Prismantis = { found?: Promise<boolean> }
 type PrismantisHost = { prismantis: { markdown: (args: { surface: 'terminal'; text: string; columns: number }) => Promise<unknown> } }
 
@@ -291,9 +292,13 @@ const prismantisActive = ($: EngineInterface, cache: Prismantis): Promise<boolea
   cache.found ??= (async () => {
     try {
       await ($ as unknown as PrismantisHost).prismantis.markdown({ surface: 'terminal', text: '', columns: 80 })
-      return true
     } catch {
       return false
+    }
+    try {
+      return (await ($ as unknown as PrismantisHost).prismantis.markdown({ surface: 'terminal', text: 'x', columns: 80 })) !== undefined
+    } catch {
+      return true
     }
   })()
   return cache.found
@@ -334,8 +339,8 @@ export const register: Register = (on, options: PluginOptions) => {
         probes.htmlCopy = undefined
         style.htmlCopy = null
       })
-      await prismantisActive($, prismantis)
-      void latexEngine($, latex)
+      // Com o prismantis ativo o latex nao e usado aqui; o catch garante que nada disso aborte o session.start.
+      if (!(await prismantisActive($, prismantis))) void latexEngine($, latex).catch(() => undefined)
       await $.command
         .register({ name: 'neon-hud', description: 'Copia a ultima resposta ou o ultimo bloco de codigo', argumentHint: '[copy [code]]' })
         .catch(() => undefined)
