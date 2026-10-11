@@ -180,9 +180,13 @@ export const register: Register = (on, options: PluginOptions) => {
       .catch(() => undefined)
 
     // Antes do resto do painel: se algo la embaixo falhar, a copia em HTML ja foi detectada.
-    // E o /neon-hud recusado nao derruba o painel, por isso o catch.
+    // Os catch impedem que a sonda ou um /neon-hud recusado aborte a restauracao e os timers do painel;
+    // a sonda que falhou e esquecida para o proximo inicio tentar de novo.
     if (rendering) {
-      await probe($, style, probes)
+      await probe($, style, probes).catch(() => {
+        probes.htmlCopy = undefined
+        style.htmlCopy = null
+      })
       await $.command
         .register({ name: 'neon-hud', description: 'Copia a ultima resposta ou o ultimo bloco de codigo', argumentHint: '[copy [code]]' })
         .catch(() => undefined)

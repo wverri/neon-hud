@@ -1,6 +1,9 @@
 import type { On } from 'claude-code'
-import { expect, test } from 'claude-code/testing'
+import type { Engine } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 
+import type { HudSaved } from '../types'
+import { STORE_PREFIX } from '../hooks/hud'
 import { startSession } from './clipboard-env'
 
 const reply = (text: string, columns = 120) => ({
@@ -60,7 +63,56 @@ test('se o /neon-hud nao registra, o /hud ainda registra e o painel abre', async
   await pane.unmount()
 })
 
-test('um erro ao desenhar devolve a resposta ao engine', async ($, on) => {
+const SAVED: HudSaved = {
+  savedAt: 1,
+  live: { phase: 'IDLE', detail: '', model: '', liveTps: 0, lastTps: 0, peakTps: 0, tpsHistory: [] },
+  tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, steps: 3, turns: 1 },
+  tools: { total: 7, counts: { Read: 7 }, recent: [] },
+  turn: { startedAt: 0, costAtStart: 0, lastMs: 0, lastCostUsd: 0 },
+}
+
+// O painel so mostra 7 calls se o session.start passou da restauracao: e o que prova que nada antes dela abortou.
+const savedSession = (on: On) => {
+  on('session.id', () => ({ value: 'sid' }))
+  mock.store(on, { [`${STORE_PREFIX}sid`]: SAVED })
+  mock.clock(on)
+  on('ui.open', () => ({ value: { isPlaced: true as const } }))
+}
+
+const restoredPane = async ($: Engine) => {
+  const pane = await $.ui.mount(PANE as never)
+  const found = await pane.find({ type: 'Text', text: /7 calls/ })
+  await pane.unmount()
+  return found
+}
+
+test('um /neon-hud recusado nao impede o painel de restaurar os contadores', async ($, on) => {
+  savedSession(on)
+  mock.env(on, {})
+  on('command.register', async (_, e) => {
+    if (e.name === 'neon-hud') throw new Error('recusado')
+    return { value: undefined } as never
+  })
+  await startSession($, on)
+  expect(await restoredPane($)).toBeDefined()
+})
+
+test('uma sonda de copia que falha nao impede a restauracao e tenta de novo no proximo inicio', async ($, on) => {
+  savedSession(on)
+  let broken = true
+  on('env.get', () => (broken ? { deny: 'sem ambiente' } : { value: undefined }))
+  on('fs.stat', (_, e, next) => (e.path.endsWith('/usr/bin/osascript') ? { value: { kind: 'file' as const, size: 0, mtimeMs: 0, isLink: false } } : next(e)))
+  await startSession($, on)
+  expect(await restoredPane($)).toBeDefined()
+  broken = false
+  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(reply('| a | b |\n|---|---|\n| 1 | 2 |'))
+  expect((await ui.findAll({ type: 'Button' })).map(b => b.props.label)).toContain('⧉ html')
+  await ui.unmount()
+})
+
+// O kit de testes tambem pula um hook que lanca e chama o de baixo, entao isto confere o comportamento, nao o try/catch.
+test('uma resposta que quebra o renderizador ainda chega ao engine', async ($, on) => {
   const native = countNative(on)
   const ui = await $.ui.mount({ ...reply(''), props: { text: undefined as never, isFirstOfReply: true } })
   expect(native.n).toBe(1)
