@@ -283,18 +283,19 @@ const probe = async ($: EngineInterface, style: Style, probes: Probes) => {
 
 // O prismantis publica $.prismantis, mas o loader proibe ler $.noun como valor; so $.noun.evento(...) passa.
 // Entao a deteccao chama o evento mais barato dele: se resolve, ele esta instalado; se lanca, nao esta.
-type Prismantis = { found?: boolean }
+// Guarda-se a promessa, nao o booleano: renders simultaneos esperam a mesma resposta. O resultado vale ate o fim do processo.
+type Prismantis = { found?: Promise<boolean> }
 type PrismantisHost = { prismantis: { markdown: (args: { surface: 'terminal'; text: string; columns: number }) => Promise<unknown> } }
 
-const prismantisActive = async ($: EngineInterface, cache: Prismantis): Promise<boolean> => {
-  if (cache.found !== undefined) return cache.found
-  cache.found = false
-  try {
-    await ($ as unknown as PrismantisHost).prismantis.markdown({ surface: 'terminal', text: '', columns: 80 })
-    cache.found = true
-  } catch {
-    cache.found = false
-  }
+const prismantisActive = ($: EngineInterface, cache: Prismantis): Promise<boolean> => {
+  cache.found ??= (async () => {
+    try {
+      await ($ as unknown as PrismantisHost).prismantis.markdown({ surface: 'terminal', text: '', columns: 80 })
+      return true
+    } catch {
+      return false
+    }
+  })()
   return cache.found
 }
 

@@ -51,6 +51,14 @@ test('com o prismantis instalado, o neon-hud deixa ele desenhar', async ($, on) 
   await ui.unmount()
 })
 
+test('renders simultaneos antes do session.start esperam a sonda e ficam com o prismantis', async ($, on) => {
+  on('engine.create', async (_$, e, next) => ({ ...(await next(e)), prismantis: { markdown: async () => undefined } }) as never)
+  const native = countNative(on)
+  const uis = await Promise.all([$.ui.mount(reply('| a |\n|---|\n| 1 |')), $.ui.mount(reply('| b |\n|---|\n| 2 |'))])
+  expect(native.n).toBe(2)
+  await Promise.all(uis.map((ui) => ui.unmount()))
+})
+
 test('sem o prismantis, o neon-hud desenha a resposta', async ($, on) => {
   const native = countNative(on)
   await startSession($, on)
