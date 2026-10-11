@@ -37,7 +37,7 @@ Por exemplo, `/private/tmp/claude-501/-Users-will-Github-neon-hud/<sessão>/imag
 
 ```
 hooks/
-  register.tsx   hooks novos: prompt.edit, prompt.submit (limpeza) e ui.render AbovePrompt
+  register.tsx   hooks novos: prompt.edit (aviso de mudanca) e ui.render AbovePrompt
   paste.tsx      puro: extrair os números do rascunho, candidatos de pasta, árvore da faixa
 ```
 
@@ -45,23 +45,24 @@ hooks/
 
 ### Estado
 
-Um atom novo, `{ plugin: 'neon-hud', key: 'paste' }`, com `{ ids: number[] }`, declarado em `types/index.d.ts`. A faixa lê esse atom e redesenha quando ele muda. A pasta de imagens encontrada fica num cache dentro do `register`, por id de sessão.
+Um atom novo, `{ plugin: 'neon-hud', key: 'paste-ids' }`, com `number[]`, declarado em `types/index.d.ts`. Ele só serve para avisar a faixa: o `prompt.edit` grava nele os números do rascunho quando eles mudam, e a faixa lê o atom para redesenhar nessa hora. O conteúdo que a faixa mostra vem sempre do rascunho atual, lido com `$.prompt.read()`. A pasta de imagens encontrada fica num cache no nível do módulo, por id de sessão.
 
 ## Fluxo
 
 1. **`prompt.edit`:** o hook chama `next(e)`, pega o texto resultante e extrai os números de `[Image #N]` com `/\[Image #(\d+)\]/g`. Eles ficam únicos e em ordem crescente. Só escreve no atom quando a lista muda. Se a colagem em si não passar por `prompt.edit`, a próxima tecla atualiza a lista. Devolve sempre o resultado de `next(e)`, sem mudar nada.
-2. **`prompt.submit`:** chama `next(e)` e zera a lista. Não acrescenta contexto nem mexe no texto.
+2. **Envio:** não precisa de hook. Ao enviar, `isWorking` vira verdadeiro e a faixa some. Quando o turno acaba, a faixa redesenha, lê o rascunho já vazio e continua sem nada.
 3. **Localizar a pasta** (na primeira renderização com ids, depois em cache):
    - bases candidatas, em ordem: `$CLAUDE_CODE_TMPDIR` (se definido), `/private/tmp` e `/tmp`;
    - em cada base, as entradas `claude-<dígitos>`;
    - dentro de cada uma, a subpasta de projeto que contém `<id da sessão>/images`.
 
    A primeira pasta encontrada vale. Não encontrar nenhuma não vira cache negativo: a próxima colagem tenta de novo, porque a pasta pode só nascer na primeira colagem.
-4. **`ui.render` `AbovePrompt`:** cai para `next(e)` quando:
+4. **`ui.render` `AbovePrompt`:** lê o atom, lê o rascunho com `$.prompt.read()` e extrai os números. Cai para `next(e)` quando:
    - `pastePreview` está desligado;
    - a lista está vazia;
    - `isWorking` (um turno está rodando);
-   - `hasSurvey` (uma pesquisa ocupa a faixa).
+   - `hasSurvey` (uma pesquisa ocupa a faixa);
+   - a superfície não é o terminal (o `Image` só existe lá).
 
    Fora desses casos, desenha a faixa.
 
@@ -93,7 +94,7 @@ Uma opção nova em `userConfig`:
 
 ## Tratamento de erros
 
-- Qualquer exceção no `prompt.edit` ou no `prompt.submit` devolve o resultado de `next(e)` intacto. A prévia nunca pode comer uma tecla nem um envio.
+- Qualquer exceção no `prompt.edit` devolve o resultado de `next(e)` intacto. A prévia nunca pode comer uma tecla. O envio do prompt não passa por nenhum hook da prévia.
 - Qualquer exceção no `AbovePrompt` cai para `next(e)`.
 - Falhas de `fs` ou de `session.id` levam a "prévia indisponível", nunca a erro visível.
 
@@ -102,9 +103,10 @@ Uma opção nova em `userConfig`:
 Em `tests/paste.test.tsx`:
 
 - **Extração:** `extractImageIds` lê `[Image #2] texto [Image #1] [Image #2]` como `[1, 2]`.
-- **Edição com imagem:** um `prompt.edit` que deixa `[Image #1]` no rascunho, com `fs` e `session.id` simulados, faz o `AbovePrompt` desenhar um `Image` com `source.file` terminando em `/<sessão>/images/1.png`, mais a legenda.
-- **Imagem removida:** uma edição que remove `[Image #1]` faz a faixa cair para `next(e)`.
-- **Envio:** `prompt.submit` limpa a faixa.
+- **Rascunho com imagem:** com o rascunho (`prompt.read`), `fs` e `session.id` simulados, o `AbovePrompt` desenha um `Image` com `source.file` igual a `<pasta>/images/1.png`, mais a legenda. O kit de testes não dispara `prompt.edit`, então o hook de edição é coberto só pela função pura que ele usa e pela verificação ao vivo.
+- **Rascunho sem imagem:** a faixa cai para `next(e)`.
+- **Pasta ainda não criada:** mostra `prévia indisponível` e, quando a pasta aparece, a próxima renderização acha a imagem.
+- **Muitas imagens em pouca largura:** só legendas, sem `Image`.
 - **Arquivo ausente:** mostra `prévia indisponível`.
 - **Opção desligada:** `pastePreview: false` não desenha nada.
 - **Turno rodando:** `isWorking: true` cai para `next(e)`.
