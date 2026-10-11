@@ -1,6 +1,11 @@
 # NEON//HUD
 
-Painel lateral para o [Claude Code](https://claude.com/claude-code) que mostra, ao vivo, o que a sessão está fazendo e quanto está custando, com visual cyberpunk.
+**Português** · [English](README.en.md)
+
+Mod cyberpunk para o [Claude Code](https://claude.com/claude-code) com duas partes:
+
+- **Painel lateral:** mostra ao vivo o que a sessão está fazendo e quanto está custando.
+- **Respostas renderizadas:** redesenha as respostas do Claude, as chamadas de ferramenta e o rodapé do turno com a mesma paleta neon do painel. Isso inclui tabelas, código com realce, diagramas mermaid e fórmulas LaTeX.
 
 <p align="center">
   <img src="docs/screenshot.png" alt="Painel NEON//HUD durante o streaming: throughput, contexto, tokens, custo, agentes e ferramentas" width="420">
@@ -23,6 +28,10 @@ O cartão que está em atividade acende em ciano: Throughput durante o streaming
 ## Respostas renderizadas
 
 O neon-hud também redesenha as respostas do Claude, as chamadas de ferramenta e o rodapé do turno com a paleta do painel. O renderizador vem do [prismantis](https://github.com/NahumLitvin/prismantis) (MIT, ver `docs/THIRD_PARTY_NOTICES.md`), com a paleta neon fixa.
+
+<p align="center">
+  <img src="docs/render.png" alt="Resposta renderizada em neon: tabela, bloco de código, diagrama mermaid, gráfico de barras, fórmula e aviso, com o painel NEON//HUD ao lado" width="820">
+</p>
 
 | Recurso | O que muda |
 | --- | --- |
@@ -63,24 +72,34 @@ Todas as opções ficam em `~/.claude/settings.json` (ou em `/config`); depois, 
 }
 ```
 
-| Opção | Valores | Padrão |
-| --- | --- | --- |
-| `render` | `true`, `false` | `true` |
-| `tableStyle` | `box`, `rules`, `grid`, `minimal` | `box` |
-| `toolRows` | `true`, `false` | `true` |
-| `toolStyle` | `chat`, `tree-dim`, `tree-bold`, `classic` | `chat` |
-| `toolOutput` | `full`, `quiet` | `full` |
-| `copyButtons` | `true`, `false` | `true` |
-| `mermaid` | `true`, `false` | `true` |
-| `mermaidAscii` | `true`, `false` | `false` |
-| `latex` | `true`, `false` | `false` |
-| `clock` | `off`, `24h`, `12h` | `off` |
-| `highlightNumbers` | `true`, `false` | `true` |
-| `highlightPaths` | `true`, `false` | `true` |
+| Opção | Valores | Padrão | O que faz |
+| --- | --- | --- | --- |
+| `render` | `true`, `false` | `true` | Liga o redesenho de respostas, ferramentas e rodapé. Desligado, só o painel continua. |
+| `tableStyle` | `box`, `rules`, `grid`, `minimal` | `box` | Estilo das tabelas. `box` põe cada célula numa caixa. `rules` traça uma linha entre as linhas da tabela. `grid` usa cabeçalho mais grosso e mais espaço. `minimal` mantém só a linha do cabeçalho. |
+| `toolRows` | `true`, `false` | `true` | Uma linha compacta por chamada de ferramenta. |
+| `toolStyle` | `chat`, `tree-dim`, `tree-bold`, `classic` | `chat` | Como as linhas de ferramenta ficam ao lado do texto do Claude. `chat` põe as linhas apagadas à direita. `tree-dim` põe as linhas apagadas sob a frase, com `⎿`. `tree-bold` é igual ao `tree-dim`, com as frases de uma linha em negrito. `classic` mantém o visual original. |
+| `toolOutput` | `full`, `quiet` | `full` | `quiet` resume cada chamada em palavras simples, mantém os diffs e mostra só a última linha de um erro. Precisa de `toolRows`. |
+| `copyButtons` | `true`, `false` | `true` | Botões de copiar em código, tabelas, diagramas, listas e citações. |
+| `mermaid` | `true`, `false` | `true` | Desenha blocos `mermaid` como arte. Desligado, o código fica como foi escrito. |
+| `mermaidAscii` | `true`, `false` | `false` | Desenha os diagramas com `+ - \| >`, para fontes sem caracteres de caixa. |
+| `latex` | `true`, `false` | `false` | Fórmulas como imagem via `ratex-render`. Funciona no kitty e no Ghostty, fora do tmux. |
+| `clock` | `off`, `24h`, `12h` | `off` | Mostra a hora em que cada turno terminou. |
+| `highlightNumbers` | `true`, `false` | `true` | Colore versões, IDs, contagens e durações. |
+| `highlightPaths` | `true`, `false` | `true` | Colore caminhos como `~/src/app.ts`. |
 
 ### Junto com o prismantis
 
 Se o prismantis estiver instalado e ligado, ele desenha as respostas e o neon-hud mostra só o painel. Com o prismantis instalado mas desligado, o neon-hud desenha as respostas normalmente. A verificação se repete quando o mod recarrega. `render: false` desliga o redesenho sem afetar o painel.
+
+## Comandos
+
+| Comando | O que faz |
+| --- | --- |
+| `/hud` | Abre o painel (ou reabre, depois de fechado no `×`). |
+| `/neon-hud copy` | Copia a última resposta do Claude, como foi escrita. |
+| `/neon-hud copy code` | Copia o último bloco de código da última resposta. |
+
+`/neon-hud` só existe com `render` ligado.
 
 ## Requisitos
 
@@ -144,14 +163,23 @@ claude plugin test ./neon-hud       # roda tests/*.test.tsx
 Estrutura:
 
 ```
-.claude-plugin/plugin.json        manifesto do mod
+.claude-plugin/plugin.json        manifesto do mod e opções (userConfig)
 .claude-plugin/marketplace.json   transforma o repositório num marketplace de um plugin
 hooks/hooks.json                  aponta para o módulo de hooks
-hooks/register.tsx                hooks de sessão, turno, ferramenta e o desenho do painel
+hooks/register.tsx                todos os hooks: sessão, turno, ferramenta, painel e renderizador
+hooks/hud.tsx                     desenho e formatação do painel (puro, sem $)
+hooks/render/                     renderizador portado do prismantis (puro, sem $)
+hooks/render/theme.ts             paleta neon e leitura das opções
+hooks/render/vendor/              Prism e beautiful-mermaid empacotados
 types/index.d.ts                  contrato do estado ($.state) do mod
 tests/hud.test.tsx                testes do painel, incluindo o de largura
+tests/neon.test.tsx               testes próprios do renderizador neon
+tests/*.test.tsx                  demais testes, portados do prismantis
+docs/THIRD_PARTY_NOTICES.md       licenças do prismantis, Prism e beautiful-mermaid
 ```
+
+O `$` do Claude Code não atravessa `import`, por isso todo código que usa `$` fica em `hooks/register.tsx`.
 
 ## Licença
 
-[MIT](LICENSE)
+[MIT](LICENSE). O renderizador vem do [prismantis](https://github.com/NahumLitvin/prismantis), também MIT; veja `docs/THIRD_PARTY_NOTICES.md`.
