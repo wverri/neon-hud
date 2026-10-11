@@ -7,7 +7,8 @@ import type { ClipboardBackend } from './render/clipboard'
 import { clipboardCommand } from './render/clipboard'
 import { clockText, endedAt, withRecord } from './render/clock'
 import type { Formula } from './render/latex'
-import { pickFormula } from './render/latex'
+import { LATEX_DPR, LATEX_FONT_PX, fitsImage, keepFormulas, mathOf, padFor, pickFormula, pngSize, ratexColor, renderedOf } from './render/latex'
+import type { Block } from './render/markdown'
 import { parse } from './render/markdown'
 import { boxArt, mermaidText, shortenEdgeLabels, unsupportedKind } from './render/mermaid'
 import type { Drawn, Fold } from './render/render'
@@ -86,6 +87,114 @@ const firstDrawn = async ($: EngineInterface, id: string): Promise<number> => {
 }
 
 type Typeset = Exclude<Formula, { error: true }> & { tex: string }
+
+const formulas = atom({ plugin: 'neon-hud', key: 'render-formulas' } as const, {})
+
+const latexDir = atom({ plugin: 'neon-hud', key: 'render-dir' } as const, '')
+
+const showsImages = async ($: EngineInterface): Promise<boolean> => {
+  if (await $.env.get('TMUX')) return false
+  if ((await $.env.get('KITTY_WINDOW_ID')) || (await $.env.get('TERM')) === 'xterm-kitty') return true
+  return (await $.env.get('TERM_PROGRAM')) === 'ghostty'
+}
+
+type Latex = { command: string; dir: string }
+type LatexSession = { style: Style; color: string; pending: Set<string>; wanted: Set<string>; batch: string[]; engine?: Promise<Latex | null>; ready?: Latex | null; stopped?: boolean; queue: Promise<void> }
+
+const formulaKey = (latex: LatexSession, tex: string) => `${latex.color}\0${tex}`
+
+const typeset = async ($: EngineInterface, latex: LatexSession, engine: Latex, texs: string[], fontSize = LATEX_FONT_PX, dpr = LATEX_DPR): Promise<Formula[]> => {
+  const { stdout } = await $.process.run(
+    [engine.command, '--output-dir', engine.dir, '--color', latex.color, '--background-color', 'transparent', '--font-size', String(fontSize), '--dpr', String(dpr)],
+    { stdin: `${texs.join('\n')}\n`, timeoutMs: 2000 },
+  )
+  const rendered = renderedOf(stdout)
+  return Promise.all(texs.map(async (_, i): Promise<Formula> => {
+    if (!rendered.has(i + 1)) return { error: true }
+    const png = await $.fs.read(`${engine.dir}/${String(i + 1).padStart(4, '0')}.png`, { as: 'bytes' }).then(r => r.base64, () => '')
+    const size = png ? pngSize(png) : null
+    return size && fitsImage(png) ? { png, ...size } : { error: true }
+  }))
+}
+
+const withPadding = async ($: EngineInterface, latex: LatexSession, engine: Latex, texs: string[], results: Formula[]): Promise<Formula[]> => {
+  const padded: Formula[] = []
+  for (const [i, result] of results.entries()) {
+    const pad = 'png' in result ? padFor(result) : null
+    const [again] = pad ? await typeset($, latex, engine, [texs[i]!], pad.fontSize, pad.dpr).catch((): Formula[] => []) : []
+    padded.push(again && 'png' in again && 'png' in result ? { ...result, padded: again } : result)
+  }
+  return padded
+}
+
+const startLatex = async ($: EngineInterface, latex: LatexSession): Promise<Latex | null> => {
+  if (!latex.style.latex || !(await $.session.surfaces()).includes('terminal') || !(await showsImages($))) return null
+  const tmp = (await $.env.get('TMPDIR')) ?? (await $.env.get('TEMP')) ?? '/tmp'
+  const suffix = (await read($, latexDir)) || crypto.randomUUID()
+  await update($, latexDir, () => suffix)
+  const engine = { command: 'ratex-render', dir: `${tmp.replace(/[\\/]+$/, '')}/neon-hud-latex-${await $.session.id()}-${suffix}` }
+  const [check] = await typeset($, latex, engine, ['x^2'])
+  return check && 'png' in check ? engine : null
+}
+
+const latexEngine = ($: EngineInterface, latex: LatexSession): Promise<Latex | null> =>
+  (latex.engine ??= startLatex($, latex)
+    .catch(() => null)
+    .then(engine => {
+      latex.ready = engine
+      if (engine) $.ui.invalidate('ui.render')
+      return engine
+    }))
+
+const stopLatex = (latex: LatexSession) => {
+  latex.stopped = true
+  latex.pending.clear()
+  latex.batch = []
+}
+
+const typesetLater = async ($: EngineInterface, latex: LatexSession, texs: string[]): Promise<void> => {
+  const engine = await latexEngine($, latex)
+  if (!engine || latex.stopped) return
+  const results = await typeset($, latex, engine, texs).then(
+    done => withPadding($, latex, engine, texs, done),
+    () => null,
+  )
+  if (!results) return stopLatex(latex)
+  const fresh = texs.map((tex, i) => [formulaKey(latex, tex), results[i]!] as const)
+  await update($, formulas, store => keepFormulas(store, fresh, latex.wanted))
+  latex.wanted.clear()
+  for (const tex of texs) latex.pending.delete(formulaKey(latex, tex))
+}
+
+const mathOfBlocks = async ($: EngineInterface, latex: LatexSession, surface: string, blocks: Block[]): Promise<Map<number, Typeset>> => {
+  const maths = [...blocks.entries()].flatMap(([i, block]) => {
+    const tex = mathOf(block)
+    return tex === null ? [] : [{ i, tex, key: formulaKey(latex, tex) }]
+  })
+  if (surface !== 'terminal' || maths.length === 0) return new Map()
+  void latexEngine($, latex)
+  if (!latex.ready) return new Map()
+  for (const { key } of maths) latex.wanted.add(key)
+  const store = (await read($, formulas)) as Record<string, Formula>
+  const missing = latex.stopped ? [] : [...new Map(maths.map(({ key, tex }) => [key, tex]))].filter(([key]) => !store[key] && !latex.pending.has(key))
+  if (missing.length) {
+    if (latex.batch.length === 0) {
+      $.clock.after(0, () => {
+        const texs = latex.batch
+        latex.batch = []
+        latex.queue = latex.queue.then(() => typesetLater($, latex, texs)).catch(() => stopLatex(latex))
+      })
+    }
+    for (const [key, tex] of missing) {
+      latex.pending.add(key)
+      latex.batch.push(tex)
+    }
+  }
+  return new Map(maths.flatMap(({ i, tex, key }) => {
+    const formula = store[key]
+    return formula && 'png' in formula ? [[i, { tex, ...formula }] as const] : []
+  }))
+}
 
 const locate = async ($: EngineInterface, style: Style) => {
   style.cwd = await $.session.root().catch(() => style.cwd)
@@ -187,6 +296,7 @@ const markExpanded = (id: string) => {
 export const register: Register = (on, options: PluginOptions) => {
   const rendering = options.render !== false
   const style = resolveStyle(options)
+  const latex: LatexSession = { style, color: ratexColor(style.theme.diagramText ?? '#c9d4f2'), pending: new Set(), wanted: new Set(), batch: [], queue: Promise.resolve() }
   const parsed = new Map<string, ReturnType<typeof parse>>()
   const parseCached = (text: string) => remember(parsed, text, () => parse(text, { numbers: style.highlightNumbers, paths: style.highlightPaths }))
   const forSurface = (base: Style, surface: RenderSurface): Style => (surface === 'terminal' || !base.htmlCopy ? base : { ...base, htmlCopy: null })
@@ -208,6 +318,7 @@ export const register: Register = (on, options: PluginOptions) => {
         probes.htmlCopy = undefined
         style.htmlCopy = null
       })
+      void latexEngine($, latex)
       await $.command
         .register({ name: 'neon-hud', description: 'Copia a ultima resposta ou o ultimo bloco de codigo', argumentHint: '[copy [code]]' })
         .catch(() => undefined)
@@ -491,7 +602,7 @@ export const register: Register = (on, options: PluginOptions) => {
             <Text color={style.theme.accent}>{e.props.isFirstOfReply ? '●' : ' '}</Text>
           </Box>
           <Box flexDirection="column" rowGap={1} flexGrow={1}>
-            {drawMarkdown($, el, narration ? { ...surfaceStyle, narration } : surfaceStyle, blocks, columnsOf(e.viewport), new Map(), blocks.length > 1 || hasRtl(e.props.text) ? e.props.text : undefined, open)}
+            {drawMarkdown($, el, narration ? { ...surfaceStyle, narration } : surfaceStyle, blocks, columnsOf(e.viewport), await mathOfBlocks($, latex, e.surface, blocks), blocks.length > 1 || hasRtl(e.props.text) ? e.props.text : undefined, open)}
           </Box>
         </Box>
       )
