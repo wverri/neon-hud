@@ -86,10 +86,20 @@ All options live in `~/.claude/settings.json` (or in `/config`). Run `/reload` a
 | `clock` | `off`, `24h`, `12h` | `off` | Shows when each turn ended. |
 | `highlightNumbers` | `true`, `false` | `true` | Colors versions, IDs, counts and durations. |
 | `highlightPaths` | `true`, `false` | `true` | Colors paths such as `~/src/app.ts`. |
+| `pastePreview` | `true`, `false` | `true` | A thumbnail of each pasted image above the prompt, before sending. |
 
 ### Alongside prismantis
 
 If prismantis is installed and enabled, it draws the replies and neon-hud shows only the pane. If prismantis is installed but disabled, neon-hud draws the replies as usual. neon-hud checks again whenever the mod reloads. `render: false` turns off the redrawing without affecting the pane.
+
+## Pasted image preview
+
+When you paste an image into the prompt, the draft only shows `[Image #1]`. neon-hud draws a thumbnail of each pasted image, with its file size, in the band above the prompt, so you can check it is the right image before sending. Deleting `[Image #N]` from the draft removes its thumbnail, and sending the prompt clears the band.
+
+- Thumbnails show in kitty and Ghostty. Other terminals show only `[Image #N] · 1.4 MB`.
+- With many images or a narrow terminal, only the captions remain.
+- `pastePreview: false` turns the preview off. It does not depend on `render`.
+- neon-hud reads the image from the file Claude Code writes when you paste (`/tmp/claude-<uid>/…/images/N.png`). That path is not part of the mods API: if a new Claude Code version moves it, the preview shows `prévia indisponível`.
 
 ## Commands
 
@@ -149,7 +159,7 @@ claude plugin uninstall neon-hud@neon-hud
 - Counters for tokens, requests and tok/s are saved per session. They survive a mod reload, a Claude Code restart and `--resume`, and reset on `/clear`. If you install in the middle of a session, they count from that point. Cost, context, model and turns always show the real value since the session began.
 - The 5h and 7d limits only appear on subscription plans that report them.
 - The mod never blocks or changes prompts or tool calls, and sends nothing to the model. It only changes how the session looks on screen.
-- External programs: `osascript` (macOS) or `copyq` (Linux), only when you click `⧉ html`, and `ratex-render` when `latex` is on. No network access.
+- External programs: `osascript` (macOS) or `copyq` (Linux), only when you click `⧉ html`, and `ratex-render` when `latex` is on. No network access. The image preview only lists folders and reads the size of pasted image files; the terminal reads the image itself.
 
 ## Development
 
@@ -168,6 +178,7 @@ Layout:
 hooks/hooks.json                  points to the hooks module
 hooks/register.tsx                every hook: session, turn, tool, pane and renderer
 hooks/hud.tsx                     pane drawing and formatting (pure, no $)
+hooks/paste.tsx                   pasted image preview (pure, no $)
 hooks/render/                     renderer ported from prismantis (pure, no $)
 hooks/render/theme.ts             neon palette and option parsing
 hooks/render/vendor/              bundled Prism and beautiful-mermaid

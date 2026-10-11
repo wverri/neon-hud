@@ -8,6 +8,7 @@
     {
       "name": "neon-hud",
       "source": "./",
+      "version": "0.7.0",
       "description": "Painel lateral cyberpunk para o Claude Code (tokens/s, contexto, custo, agentes e ferramentas) e respostas renderizadas em neon: tabelas, codigo, diagramas, LaTeX e tool rows"
     }
   ]

@@ -86,10 +86,20 @@ Todas as opções ficam em `~/.claude/settings.json` (ou em `/config`); depois, 
 | `clock` | `off`, `24h`, `12h` | `off` | Mostra a hora em que cada turno terminou. |
 | `highlightNumbers` | `true`, `false` | `true` | Colore versões, IDs, contagens e durações. |
 | `highlightPaths` | `true`, `false` | `true` | Colore caminhos como `~/src/app.ts`. |
+| `pastePreview` | `true`, `false` | `true` | Miniatura de cada imagem colada acima do prompt, antes do envio. |
 
 ### Junto com o prismantis
 
 Se o prismantis estiver instalado e ligado, ele desenha as respostas e o neon-hud mostra só o painel. Com o prismantis instalado mas desligado, o neon-hud desenha as respostas normalmente. A verificação se repete quando o mod recarrega. `render: false` desliga o redesenho sem afetar o painel.
+
+## Prévia de imagem colada
+
+Quando você cola uma imagem no prompt, o rascunho mostra só `[Image #1]`. O neon-hud desenha, na faixa acima do prompt, uma miniatura de cada imagem colada, com o tamanho do arquivo, para você conferir se é a imagem certa antes de enviar. Apagar o `[Image #N]` do rascunho tira a miniatura, e enviar o prompt limpa a faixa.
+
+- A miniatura aparece no kitty e no Ghostty. Nos outros terminais aparece só `[Image #N] · 1.4 MB`.
+- Com muitas imagens ou pouca largura, ficam só as legendas.
+- `pastePreview: false` desliga a prévia. Ela não depende de `render`.
+- O neon-hud lê a imagem do arquivo que o Claude Code grava ao colar (`/tmp/claude-<uid>/…/images/N.png`). Esse caminho não faz parte da API de mods: se uma versão nova do Claude Code mudar o caminho, a prévia passa a mostrar `prévia indisponível`.
 
 ## Comandos
 
@@ -149,7 +159,7 @@ claude plugin uninstall neon-hud@neon-hud
 - Os contadores de tokens, requisições e tok/s ficam salvos por sessão: sobrevivem a reload do mod, a reiniciar o Claude Code e a `--resume`, e zeram no `/clear`. Se você instalar no meio de uma sessão, eles contam a partir dali. Custo, contexto, modelo e turnos sempre mostram o valor real desde o início da sessão.
 - Os limites de 5h e 7d só aparecem em planos de assinatura que informam esses limites.
 - O mod nunca bloqueia nem altera prompts ou chamadas de ferramenta e não envia nada ao modelo; ele só muda como a sessão aparece na tela.
-- Programas externos: `osascript` (macOS) ou `copyq` (Linux) só ao clicar em `⧉ html`, e `ratex-render` com `latex` ligado. Sem rede.
+- Programas externos: `osascript` (macOS) ou `copyq` (Linux) só ao clicar em `⧉ html`, e `ratex-render` com `latex` ligado. Sem rede. A prévia de imagem só lista pastas e lê o tamanho dos arquivos de imagem colados; quem lê a imagem é o terminal.
 
 ## Desenvolvimento
 
@@ -168,6 +178,7 @@ Estrutura:
 hooks/hooks.json                  aponta para o módulo de hooks
 hooks/register.tsx                todos os hooks: sessão, turno, ferramenta, painel e renderizador
 hooks/hud.tsx                     desenho e formatação do painel (puro, sem $)
+hooks/paste.tsx                   prévia de imagem colada (puro, sem $)
 hooks/render/                     renderizador portado do prismantis (puro, sem $)
 hooks/render/theme.ts             paleta neon e leitura das opções
 hooks/render/vendor/              Prism e beautiful-mermaid empacotados
