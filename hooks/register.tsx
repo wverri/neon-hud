@@ -126,7 +126,7 @@ const pastedImage = async ($: EngineInterface, dir: string | undefined, id: numb
   if (dir === undefined) return { id }
   const file = `${dir}/${id}.png`
   const stat = await $.fs.stat(file).catch(() => undefined)
-  return stat?.kind === 'file' ? { id, file, bytes: stat.size } : { id }
+  return stat?.kind === 'file' ? { id, file, bytes: stat.size, mtimeMs: stat.mtimeMs } : { id }
 }
 
 const showsImages = async ($: EngineInterface): Promise<boolean> => {
@@ -589,11 +589,20 @@ export const register: Register = (on, options: PluginOptions) => {
   })
 
   if (options.pastePreview !== false) {
+    // Ultimos numeros gravados no atom: o caso comum (tecla que nao mexe nas imagens) nao chama o engine.
+    let lastIds: number[] = []
+    // A pasta ou o arquivo pode nascer depois da edicao; procura de novo algumas vezes e desiste.
+    const retry = { key: '', left: 0 }
+
     on('prompt.edit', async ($, e, next) => {
       const result = await next(e)
       try {
         const ids = extractImageIds(result.text)
-        if (!sameIds(await read($, pasteIds), ids)) await update($, pasteIds, () => ids)
+        if (!sameIds(lastIds, ids)) {
+          lastIds = ids
+          // Sem await: a previa nao pode atrasar a digitacao.
+          void update($, pasteIds, () => ids).catch(() => undefined)
+        }
       } catch {
         // A previa nunca pode atrapalhar a digitacao.
       }
@@ -609,6 +618,12 @@ export const register: Register = (on, options: PluginOptions) => {
         if (ids.length === 0) return next(e)
         const dir = await findImagesDir($)
         const images = await Promise.all(ids.map(id => pastedImage($, dir, id)))
+        const key = ids.join(',')
+        if (retry.key !== key) Object.assign(retry, { key, left: 4 })
+        if (images.some(image => image.file === undefined) && retry.left > 0) {
+          retry.left--
+          $.clock.after(300, () => $.ui.invalidate('ui.render'))
+        }
         const el = $.ui.resolve(e) as ElementTable<'terminal'>
         const { Box } = el
         // Se a faixa de baixo falhar, a previa ainda aparece sozinha.

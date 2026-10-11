@@ -56,16 +56,17 @@ const band = (props: Partial<{ isWorking: boolean; hasSurvey: boolean; bodyColum
 })
 
 // draft e o rascunho; files diz o tamanho de cada arquivo em DIR; hasDir controla se a pasta ja existe.
-const pasted = (on: On, draft: string, files: Record<string, number> = { '1.png': 1_500_000 }, state = { hasDir: true }) => {
+const MTIME = 1_700_000_000_123.6
+const pasted = (on: On, draft: string, files: Record<string, number> = { '1.png': 1_500_000 }, state = { hasDir: true, mtimeMs: MTIME, lists: 0 }) => {
   on('session.id', () => ({ value: 'sid' }))
   mock.env(on, {})
   on('prompt.read', () => ({ value: { text: draft, cursor: draft.length } }))
-  on('fs.list', (_, e) => ({ value: state.hasDir ? (LISTING[e.path] ?? []) : [] }))
+  on('fs.list', (_, e) => (state.lists++, { value: state.hasDir ? (LISTING[e.path] ?? []) : [] }))
   on('fs.exists', (_, e) => ({ value: state.hasDir && e.path === DIR }))
   on('fs.stat', (_, e) => {
     const name = e.path.slice(DIR.length + 1)
     const size = e.path.startsWith(`${DIR}/`) ? files[name] : undefined
-    return size === undefined ? { deny: 'ENOENT' } : { value: { kind: 'file' as const, size, mtimeMs: 0, isLink: false } }
+    return size === undefined ? { deny: 'ENOENT' } : { value: { kind: 'file' as const, size, mtimeMs: state.mtimeMs, isLink: false } }
   })
   return state
 }
@@ -84,7 +85,7 @@ test('uma imagem colada aparece como miniatura acima do prompt', async ($, on) =
   pasted(on, 'olha isso [Image #1]')
   const ui = await $.ui.mount(band() as never)
   const image = await ui.find({ type: 'Image' })
-  expect(image?.props.source).toEqual({ file: `${DIR}/1.png`, format: 'png' })
+  expect(image?.props.source).toEqual({ file: `${DIR}/1.png`, format: 'png', generation: 1_700_000_000_123 })
   expect(image?.props.columns).toBe(24)
   expect(image?.props.rows).toBe(8)
   expect((await ui.find({ type: 'Text', text: 'PASTE' }))?.props.color).toBe('#00e5ff')
@@ -119,15 +120,50 @@ test('um numero sem arquivo mostra previa indisponivel', async ($, on) => {
   await ui.unmount()
 })
 
-test('a pasta que ainda nao existe e procurada de novo depois', async ($, on) => {
-  const state = pasted(on, '[Image #1]', { '1.png': 2048 }, { hasDir: false })
-  const first = await $.ui.mount(band() as never)
-  expect(await first.find({ type: 'Text', text: '[Image #1] · prévia indisponível' })).toBeDefined()
-  await first.unmount()
+test('a pasta que ainda nao existe e procurada de novo sem nova tecla', async ($, on) => {
+  const clock = mock.clock(on)
+  const state = pasted(on, '[Image #1]', { '1.png': 2048 }, { hasDir: false, mtimeMs: MTIME, lists: 0 })
+  const ui = await $.ui.mount(band() as never)
+  expect(await ui.find({ type: 'Text', text: '[Image #1] · prévia indisponível' })).toBeDefined()
   state.hasDir = true
-  const second = await $.ui.mount(band() as never)
-  expect(await second.find({ type: 'Text', text: '[Image #1] · 2 KB' })).toBeDefined()
-  await second.unmount()
+  await clock.advance(300)
+  expect(await ui.find({ type: 'Text', text: '[Image #1] · 2 KB' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a nova procura para depois de poucas tentativas', async ($, on) => {
+  const clock = mock.clock(on)
+  const state = pasted(on, '[Image #1]', {}, { hasDir: false, mtimeMs: MTIME, lists: 0 })
+  const ui = await $.ui.mount(band() as never)
+  await clock.advance(10_000)
+  const settled = state.lists
+  await clock.advance(10_000)
+  expect(state.lists).toBe(settled)
+  expect(settled).toBeLessThan(20)
+  await ui.unmount()
+})
+
+type Node = { type: string; props: Record<string, unknown>; children?: (Node | string)[] }
+const nodes = (n: Node | string): Node[] => (typeof n === 'string' ? [] : [n, ...(n.children ?? []).flatMap(nodes)])
+
+test('legendas sem miniatura ficam em coluna', async ($, on) => {
+  pasted(on, '[Image #1][Image #2][Image #3][Image #4][Image #5]', { '1.png': 1, '2.png': 1, '3.png': 1, '4.png': 1, '5.png': 1 })
+  const ui = await $.ui.mount(band({ bodyColumns: 40 }) as never)
+  const tree = nodes((await ui.drawn()) as never)
+  const holder = tree.find(n => n.props.columnGap === 2)
+  expect(holder?.props.flexDirection).toBe('column')
+  await ui.unmount()
+})
+
+test('a legenda nunca passa da largura da miniatura', async ($, on) => {
+  pasted(on, '[Image #3]', {})
+  const ui = await $.ui.mount(band() as never)
+  const tree = nodes((await ui.drawn()) as never)
+  const text = tree.find(n => n.type === 'Text' && JSON.stringify(n.children).includes('prévia indisponível'))
+  expect(text?.props.wrap).toBe('truncate-end')
+  const holder = tree.find(n => n.children?.includes(text as never))
+  expect(holder?.props.width).toBe(24)
+  await ui.unmount()
 })
 
 test('muitas imagens em pouca largura viram so legendas', async ($, on) => {

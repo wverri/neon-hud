@@ -2,7 +2,7 @@ import type { ElementTable, RenderElement } from 'claude-code'
 
 import { C } from './hud'
 
-export type PastedImage = { id: number; file?: string; bytes?: number }
+export type PastedImage = { id: number; file?: string; bytes?: number; mtimeMs?: number }
 
 const IMAGE_REF = /\[Image #(\d+)\]/g
 
@@ -38,11 +38,14 @@ export function drawPasteBand({ Box, Text, Image }: ElementTable<'terminal'>, im
         </Text>
         <Text color={C.dim}>{images.length === 1 ? '1 imagem' : `${images.length} imagens`}</Text>
       </Box>
-      <Box flexDirection="row" columnGap={2}>
+      {/* Sem miniatura as legendas empilham: lado a lado quebrariam em pedacos. */}
+      <Box flexDirection={size ? 'row' : 'column'} columnGap={2}>
         {images.map(image => (
-          <Box flexDirection="column">
-            {size && image.file !== undefined ? <Image source={{ file: image.file, format: 'png' }} columns={size.columns} rows={size.rows} alt={caption(image)} /> : null}
-            <Text color={image.file === undefined ? C.dim : C.text}>{caption(image)}</Text>
+          <Box flexDirection="column" width={size?.columns}>
+            {size && image.file !== undefined ? <Image source={{ file: image.file, format: 'png', ...(image.mtimeMs === undefined ? {} : { generation: Math.trunc(image.mtimeMs) }) }} columns={size.columns} rows={size.rows} alt={caption(image)} /> : null}
+            <Text color={image.file === undefined ? C.dim : C.text} wrap="truncate-end">
+              {caption(image)}
+            </Text>
           </Box>
         ))}
       </Box>
