@@ -124,3 +124,14 @@ test('uma tabela desenha o cabecalho em ciano neon', async $ => {
   expect((await ui.find({ type: 'Text', text: 'Nome' }))?.props.color).toBe('#00e5ff')
   await ui.unmount()
 })
+
+test('o rodape do turno usa o verde neon na duracao', async $ => {
+  const ui = await $.ui.mount({
+    plugin: 'neon-hud',
+    surface: 'terminal',
+    component: 'TurnDuration',
+    props: { word: 'Baked', durationMs: 380_000 },
+  } as never)
+  expect((await ui.find({ type: 'Text', text: /^6m 20s$/ }))?.props.color).toBe('#3dff9a')
+  await ui.unmount()
+})

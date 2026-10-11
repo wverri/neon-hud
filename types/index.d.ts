@@ -79,6 +79,8 @@ declare module 'claude-code' {
       turn: HudTurn
       context: HudContext | null
       'render-unfolded': string[]
+      'render-turnEnds': { durationMs: number; at: number }[]
+      'render-drawn': StateFamily<number>
     }
   }
 }

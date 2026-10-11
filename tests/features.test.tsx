@@ -4,7 +4,8 @@ import type { TestBody } from 'claude-code/testing'
 
 import { parse } from '../hooks/render/markdown'
 import { NEON } from '../hooks/render/theme'
-import { columnWidths, describeShell, diffLines, tint, errorReason, groupSummary, isReadOnlyCall, programsOf, refusalReason, rememberCall, shortTarget, shortenPaths } from '../hooks/render/render'
+import { clockText, endedAt, sentAt } from '../hooks/render/clock'
+import { columnWidths, describeShell, diffLines, formatDuration, tint, errorReason, groupSummary, isReadOnlyCall, programsOf, refusalReason, rememberCall, shortTarget, shortenPaths } from '../hooks/render/render'
 
 const t = NEON
 const engine = (on: On) =>
@@ -793,4 +794,76 @@ test('a root spelled with another case or separators prints as the dot, but only
   expect(shortTarget({ cwd: 'E:\\projects\\example', home: 'E:\\u' }, 'e:/projects/example/')).toBe('.')
   expect(shortTarget({ cwd: '/home/dev/app', home: '/home/dev' }, '/home/dev/app')).toBe('.')
   expect(shortTarget({ cwd: '/home/dev/app', home: '/home/dev' }, '/home/dev/App')).toBe('~/App')
+})
+
+test('turn footer formats durations', async () => {
+  expect(formatDuration(3000)).toBe('3s')
+  expect(formatDuration(380000)).toBe('6m 20s')
+  expect(formatDuration(3720000)).toBe('1h 2m')
+})
+
+test('turn footer keeps the word and colors the duration', async $ => {
+  const ui = await $.ui.mount({ plugin: 'neon-hud', surface: 'terminal', component: 'TurnDuration', props: { word: 'Baked', durationMs: 380000 } })
+  expect((await ui.find({ type: 'Text', text: /^6m 20s$/ }))?.props.color).toBe(t.number)
+  await ui.unmount()
+})
+
+const local = (day: number, h: number, m: number, sec = 0) => new Date(2026, 9, day, h, m, sec).getTime()
+
+test('clock times read as 24h or 12h, with the date when not today', () => {
+  const now = local(10, 18, 0)
+  expect(clockText(local(10, 14, 32, 5), now, '24h')).toBe('14:32')
+  expect(clockText(local(10, 14, 32, 5), now, '12h')).toBe('2:32 PM')
+  expect(clockText(local(10, 0, 5), now, '12h')).toBe('12:05 AM')
+  expect(clockText(local(9, 23, 5), now, '24h')).toBe('Oct 9 23:05')
+})
+
+test('a row takes the newest matching time recorded before it was first drawn', () => {
+  const list = [{ text: 'again', at: 1 }, { text: 'hi there', at: 2 }, { text: 'again', at: 3 }]
+  expect(sentAt(list, 'again', 2)).toBe(1)
+  expect(sentAt(list, ' hi   there\n', 2)).toBe(2)
+  expect(sentAt(list, 'again', 3)).toBe(3)
+  expect(sentAt(list, 'again', 0)).toBeUndefined()
+  expect(sentAt(list, 'never sent', 9)).toBeUndefined()
+  const ends = [{ durationMs: 5000, at: 10 }, { durationMs: 60000, at: 20 }, { durationMs: 5200, at: 30 }]
+  expect(endedAt(ends, 5200, 30)).toBe(30)
+  expect(endedAt(ends, 5200, 29)).toBe(10)
+  expect(endedAt(ends, 60400, 30)).toBe(20)
+  expect(endedAt(ends, 90000, 30)).toBeUndefined()
+})
+
+test('clock adds the end time to the turn footer', { options: { clock: '24h' } }, async ($, on) => {
+  mock.clock(on, { now: local(10, 14, 32) })
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 0, window: 1, percent: 0 }, rateLimits: [], cost: { usd: 0 } } }) as never)
+  on('turn.complete', async (_$, e) => ({ text: e.answer }))
+  await $.turn.complete({ answer: 'done', durationMs: 380000, isAborted: false, turnId: 't1', reason: 'answer' })
+  const ui = await $.ui.mount({ plugin: 'neon-hud', surface: 'terminal', component: 'TurnDuration', props: { word: 'Baked', durationMs: 380000 } })
+  expect((await ui.find({ type: 'Text', text: /^14:32$/ }))?.props.color).toBe(t.number)
+  await ui.unmount()
+})
+
+test('clock off, or a turn it never saw, leaves the turn footer as it was', async ($, on) => {
+  mock.clock(on, { now: local(10, 14, 32) })
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 0, window: 1, percent: 0 }, rateLimits: [], cost: { usd: 0 } } }) as never)
+  on('turn.complete', async (_$, e) => ({ text: e.answer }))
+  await $.turn.complete({ answer: 'done', durationMs: 380000, isAborted: false, turnId: 't1', reason: 'answer' })
+  const ui = await $.ui.mount({ plugin: 'neon-hud', surface: 'terminal', component: 'TurnDuration', props: { word: 'Baked', durationMs: 380000 } })
+  expect(await ui.find({ type: 'Text', text: /^14:32$/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('an old turn line that redraws never takes a later end with a close duration', { options: { clock: '24h' } }, async ($, on) => {
+  const clock = mock.clock(on, { now: local(10, 14, 0) })
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 0, window: 1, percent: 0 }, rateLimits: [], cost: { usd: 0 } } }) as never)
+  on('turn.complete', async (_$, e) => ({ text: e.answer }))
+  const line = (id: string) => $.ui.mount({ plugin: 'neon-hud', surface: 'terminal', component: 'TurnDuration', requestId: id, props: { word: 'Baked', durationMs: 5000 } })
+  const old = await line('old')
+  await clock.advance(60000)
+  await $.turn.complete({ answer: 'done', durationMs: 5100, isAborted: false, turnId: 't2', reason: 'answer' })
+  await old.redraw()
+  expect(await old.find({ type: 'Text', text: /^14:01$/ })).toBeUndefined()
+  const fresh = await line('new')
+  expect(await fresh.find({ type: 'Text', text: /^14:01$/ })).toBeDefined()
+  await old.unmount()
+  await fresh.unmount()
 })

@@ -5,12 +5,13 @@ import type { HudAgent, HudContext, HudLive, HudPhase, HudSaved, HudTokens, HudT
 import { PANE, STORE_KEEP, STORE_PREFIX, TITLE, WIDTH, drawPane, toContext } from './hud'
 import type { ClipboardBackend } from './render/clipboard'
 import { clipboardCommand } from './render/clipboard'
+import { clockText, endedAt, withRecord } from './render/clock'
 import type { Formula } from './render/latex'
 import { pickFormula } from './render/latex'
 import { parse } from './render/markdown'
 import { boxArt, mermaidText, shortenEdgeLabels, unsupportedKind } from './render/mermaid'
 import type { Drawn, Fold } from './render/render'
-import { isReadOnlyCall, remember, rememberCall, renderBlocks, renderDiffCard, renderExpandedShell, renderFailure, renderShellResult, renderToolGroup, renderToolRow, width } from './render/render'
+import { isReadOnlyCall, remember, rememberCall, renderBlocks, renderDiffCard, renderExpandedShell, renderFailure, renderShellResult, renderToolGroup, renderToolRow, renderTurnDuration, width } from './render/render'
 import { hasRtl } from './render/rtl'
 import type { Style } from './render/theme'
 import { resolveStyle } from './render/theme'
@@ -72,6 +73,17 @@ async function refreshContext($: EngineInterface) {
 const columnsOf = (viewport?: { columns?: number }) => Math.max(20, (viewport?.columns ?? 100) - 4)
 
 const unfolded = atom({ plugin: 'neon-hud', key: 'render-unfolded' } as const, [] as string[])
+
+const turnEnds = atom({ plugin: 'neon-hud', key: 'render-turnEnds' } as const, [])
+
+const firstDrawn = async ($: EngineInterface, id: string): Promise<number> => {
+  const ref = { plugin: 'neon-hud', key: 'render-drawn', id } as const
+  const { value } = await $.state.get(ref)
+  if (value !== undefined) return value
+  const now = await $.clock.now()
+  $.clock.after(0, () => void $.state.set(ref, now, { ifVersion: 0 }))
+  return now
+}
 
 type Typeset = Exclude<Formula, { error: true }> & { tex: string }
 
@@ -385,6 +397,10 @@ export const register: Register = (on, options: PluginOptions) => {
         lastCostUsd: Math.max(0, (usage.cost?.usd ?? 0) - s.costAtStart),
       }))
       await update($, live, (s): HudLive => ({ ...s, phase: 'IDLE', detail: '', liveTps: 0 }))
+      if (rendering && style.clock !== 'off') {
+        const at = await $.clock.now()
+        await update($, turnEnds, list => withRecord(list, { durationMs: e.durationMs, at }))
+      }
     }
 
     return next(e)
@@ -403,6 +419,13 @@ export const register: Register = (on, options: PluginOptions) => {
   })
 
   if (!rendering) return
+
+  on('ui.render', { component: 'TurnDuration' }, async ($, e, next) => {
+    if (prismantisActive($)) return next(e)
+    const at = style.clock === 'off' ? undefined : endedAt(await read($, turnEnds), e.props.durationMs, await firstDrawn($, e.requestId))
+    const time = at === undefined ? undefined : clockText(at, await $.clock.now(), style.clock)
+    return renderTurnDuration($.ui.resolve(e), style, e.props.word, e.props.durationMs, time)
+  })
 
   const quiet = style.toolOutput === 'quiet'
   if (options.toolRows !== false) {
