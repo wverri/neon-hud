@@ -78,6 +78,7 @@ declare module 'claude-code' {
       vitals: HudVitals
       turn: HudTurn
       context: HudContext | null
+      'render-unfolded': string[]
     }
   }
 }

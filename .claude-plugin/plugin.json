@@ -16,5 +16,100 @@
     "cost",
     "cyberpunk"
   ],
-  "types": "./types/index.d.ts"
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "render": {
+      "type": "boolean",
+      "title": "Render",
+      "description": "Redesenha respostas, ferramentas e o rodape do turno com a paleta neon. Desligado, o painel continua.",
+      "default": true
+    },
+    "tableStyle": {
+      "type": "string",
+      "title": "Table style",
+      "description": "box: cada celula numa caixa, com linha dupla sob o cabecalho. rules: uma linha sob o cabecalho e entre as linhas. grid: linha mais grossa no cabecalho e espacos maiores. minimal: so a linha do cabecalho.",
+      "default": "box",
+      "options": [
+        "box",
+        "rules",
+        "grid",
+        "minimal"
+      ]
+    },
+    "toolRows": {
+      "type": "boolean",
+      "title": "Tool rows",
+      "description": "Desenha cada chamada de ferramenta numa linha compacta: Ran gh pr view 12, Read ~/src/app.ts, Edited README.md. Os resultados seguem abaixo como sempre.",
+      "default": true
+    },
+    "toolStyle": {
+      "type": "string",
+      "title": "Tool row style",
+      "description": "Como as linhas de ferramenta (Ran, Read, Edited) ficam ao lado das frases do Claude. chat: linhas de ferramenta apagadas a direita, Claude a esquerda. tree-dim: sob a frase com ⎿ e apagadas. tree-bold: tree-dim mais frases de uma linha em negrito. classic: o visual original.",
+      "default": "chat",
+      "options": [
+        "chat",
+        "tree-dim",
+        "tree-bold",
+        "classic"
+      ]
+    },
+    "toolOutput": {
+      "type": "string",
+      "title": "Tool output",
+      "description": "Quanto de cada chamada aparece. full: o que o Claude Code mostra. quiet: as linhas dizem em palavras simples o que a chamada fez, leituras, buscas e listagens mostram so a linha, outros comandos de shell mostram as primeiras linhas, edicoes mantem o diff, uma chamada que falhou mostra a ultima linha do erro e uma recusada o motivo inteiro. Precisa de toolRows ligado.",
+      "default": "full",
+      "options": [
+        "full",
+        "quiet"
+      ]
+    },
+    "copyButtons": {
+      "type": "boolean",
+      "title": "Copy buttons",
+      "description": "Poe um botao de copiar em blocos de codigo, tabelas, diagramas, listas e citacoes. Alcance com ctrl+x tab e Enter, ou clique onde o terminal repassa cliques.",
+      "default": true
+    },
+    "mermaid": {
+      "type": "boolean",
+      "title": "Mermaid diagrams",
+      "description": "Desenha blocos ```mermaid como arte em caixas coloridas no tamanho do terminal. Desligado, o codigo fica como foi escrito.",
+      "default": true
+    },
+    "mermaidAscii": {
+      "type": "boolean",
+      "title": "Mermaid ASCII only",
+      "description": "Desenha diagramas com + - | > em vez de caracteres de caixa, para fontes que nao os tem.",
+      "default": false
+    },
+    "latex": {
+      "type": "boolean",
+      "title": "LaTeX math",
+      "description": "Desenha formulas $$ e ```math como imagens no kitty e no Ghostty (fora do tmux) com o renderizador do RaTeX, instalado como ratex-render no PATH. Desligado, nada roda. Formulas que nao desenham ficam como texto.",
+      "default": false
+    },
+    "clock": {
+      "type": "string",
+      "title": "Clock times",
+      "description": "Mostra quando cada turno terminou. 24h: 14:32. 12h: 2:32 PM. Um horario de outro dia ganha a data. off: sem horarios.",
+      "default": "off",
+      "options": [
+        "off",
+        "24h",
+        "12h"
+      ]
+    },
+    "highlightNumbers": {
+      "type": "boolean",
+      "title": "Highlight numbers",
+      "description": "Colore versoes, IDs, contagens e duracoes no texto e nas tabelas.",
+      "default": true
+    },
+    "highlightPaths": {
+      "type": "boolean",
+      "title": "Highlight paths",
+      "description": "Colore caminhos de arquivo como ~/src/app.ts ou /var/log.",
+      "default": true
+    }
+  }
 }

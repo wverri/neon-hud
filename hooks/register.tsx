@@ -1,8 +1,19 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, PluginOptions, Register, RenderElement, RenderSurface } from 'claude-code'
 
 import type { HudAgent, HudContext, HudLive, HudPhase, HudSaved, HudTokens, HudTools, HudTurn, HudVitals } from '../types'
 import { PANE, STORE_KEEP, STORE_PREFIX, TITLE, WIDTH, drawPane, toContext } from './hud'
+import type { ClipboardBackend } from './render/clipboard'
+import { clipboardCommand } from './render/clipboard'
+import type { Formula } from './render/latex'
+import { pickFormula } from './render/latex'
+import { parse } from './render/markdown'
+import { boxArt, mermaidText, shortenEdgeLabels, unsupportedKind } from './render/mermaid'
+import type { Drawn, Fold } from './render/render'
+import { remember, renderBlocks, width } from './render/render'
+import { hasRtl } from './render/rtl'
+import type { Style } from './render/theme'
+import { resolveStyle } from './render/theme'
 
 const live = atom({ plugin: 'neon-hud', key: 'live' } as const, {
   phase: 'IDLE',
@@ -58,12 +69,124 @@ async function refreshContext($: EngineInterface) {
   if (b && b.rawMaxTokens > 0) await update($, context, () => toContext(b))
 }
 
-export const register: Register = on => {
+const columnsOf = (viewport?: { columns?: number }) => Math.max(20, (viewport?.columns ?? 100) - 4)
+
+const unfolded = atom({ plugin: 'neon-hud', key: 'render-unfolded' } as const, [] as string[])
+
+type Typeset = Exclude<Formula, { error: true }> & { tex: string }
+
+const locate = async ($: EngineInterface, style: Style) => {
+  style.cwd = await $.session.root().catch(() => style.cwd)
+  style.home ||= (await $.env.get('HOME').catch(() => undefined)) ?? (await $.env.get('USERPROFILE').catch(() => undefined)) ?? ''
+}
+
+const htmlBackend = async ($: EngineInterface): Promise<ClipboardBackend | null> => {
+  if (await $.env.get('SSH_CONNECTION') || await $.env.get('SSH_TTY')) return null
+  const helper = await $.fs.stat('/usr/bin/osascript').catch(() => null)
+  if (helper?.kind === 'file') return 'macos'
+  return await $.env.get('WAYLAND_DISPLAY') || await $.env.get('DISPLAY') ? 'linux' : null
+}
+
+const copyTable = async ($: EngineInterface, backend: ClipboardBackend, html: string, text: string): Promise<string | null> => {
+  const command = clipboardCommand(backend, html, text)
+  const result = await $.process.run(command.argv, { stdin: command.stdin, timeoutMs: 5000 }).catch(() => null)
+  if (!result) return command.failure
+  return result.exitCode === 0 ? null : result.stderr.trim() || command.failure
+}
+
+const folder = ($: EngineInterface, el: ReturnType<EngineInterface['ui']['resolve']>, open?: string[]): Fold => (id, hidden, key) => {
+  if (!open) return null
+  const folded = !open.includes(id)
+  return { folded, element: <el.Button key={key} variant="secondary" label={folded ? `+${hidden} more lines` : 'show less'} onPress={() => update($, unfolded, ids => (folded ? [...ids, id].slice(-500) : ids.filter(x => x !== id)))} /> }
+}
+
+const drawMarkdown = ($: EngineInterface, el: ReturnType<EngineInterface['ui']['resolve']>, style: Style, blocks: ReturnType<typeof parse>, columns: number, math: Map<number, Typeset> = new Map(), reply?: string, open?: string[]): RenderElement[] => {
+  const { Button } = el
+  const copy = (text: string | (() => string), key: string, label = '⧉ copy', html?: () => string) => {
+    const copied = async (surface: RenderSurface): Promise<string> => {
+      const content = typeof text === 'function' ? text() : text
+      const backend = style.htmlCopy
+      const failure = html && backend ? await copyTable($, backend, html(), content) : undefined
+      if (failure === null) return 'Copied formatted table'
+      const result = await $.ui.copy({ text: content, surface })
+      if (!result.isCopied) return `Copy failed: ${result.reason}`
+      return failure ? `Copied as plain text (${failure})` : 'Copied'
+    }
+    return style.copyButtons && (!html || style.htmlCopy) ? (
+      <Button
+        key={key}
+        variant="primary"
+        label={label}
+        onPress={async press => $.ui.toast(await copied(press.surface).catch(() => 'Copy failed'))}
+      />
+    ) : null
+  }
+  const drawn: Drawn = new Map()
+  if (style.mermaid) {
+    for (const [i, block] of blocks.entries()) {
+      if (block.kind !== 'code' || block.lang.toLowerCase() !== 'mermaid') continue
+      const source = block.lines.join('\n')
+      let narrowest = Infinity
+      for (const max of [Infinity, 24, 12]) {
+        const art = mermaidText(max === Infinity ? source : shortenEdgeLabels(source, max), style.mermaidAscii, columns)
+        const wide = art === null ? Infinity : Math.max(...art.split('\n').map(width))
+        narrowest = Math.min(narrowest, wide)
+        if (art === null || wide > columns - 2) continue
+        drawn.set(i, { element: boxArt(el, style, art, `b${i}`), art })
+        break
+      }
+      if (!drawn.has(i) && !block.isOpen) {
+        const kind = unsupportedKind(source)
+        drawn.set(i, { note: kind ? `${kind} diagrams draw as source for now` : narrowest === Infinity ? 'diagram failed to render' : `diagram is ${narrowest} cols, terminal is ${columns}` })
+      }
+    }
+  }
+  const Image = 'Image' in el ? el.Image : null
+  if (Image) {
+    for (const [i, formula] of math) {
+      const picked = pickFormula(formula, columns)
+      if (picked) drawn.set(i, { element: <Image key={`b${i}`} source={{ png: picked.picture.png }} columns={picked.fit.columns} rows={picked.fit.rows} alt={formula.tex} /> })
+    }
+  }
+  const elements = renderBlocks(el, style, blocks, columns, drawn, copy, folder($, el, open))
+  const button = reply === undefined ? null : copy(reply, 'reply', '⧉ copy reply')
+  return button ? [...elements, <el.Box key="reply" alignSelf="flex-end">{button}</el.Box>] : elements
+}
+
+type Probes = { htmlCopy?: Promise<ClipboardBackend | null> }
+
+const probe = async ($: EngineInterface, style: Style, probes: Probes) => {
+  probes.htmlCopy ??= htmlBackend($)
+  style.htmlCopy = await probes.htmlCopy
+}
+
+// Preenchida na Task 7; por ora o neon-hud sempre desenha.
+const prismantisActive = (_$: EngineInterface): boolean => false
+
+export const register: Register = (on, options: PluginOptions) => {
+  const rendering = options.render !== false
+  const style = resolveStyle(options)
+  const parsed = new Map<string, ReturnType<typeof parse>>()
+  const parseCached = (text: string) => remember(parsed, text, () => parse(text, { numbers: style.highlightNumbers, paths: style.highlightPaths }))
+  const forSurface = (base: Style, surface: RenderSurface): Style => (surface === 'terminal' || !base.htmlCopy ? base : { ...base, htmlCopy: null })
+  const probes: Probes = {}
+
   on('session.start', async ($, e, next) => {
-    await $.command.register({
-      name: 'hud',
-      description: 'Abre o painel NEON//HUD com o status da sessao',
-    })
+    await $.command
+      .register({
+        name: 'hud',
+        description: 'Abre o painel NEON//HUD com o status da sessao',
+      })
+      .catch(() => undefined)
+
+    // Antes do resto do painel: se algo la embaixo falhar, a copia em HTML ja foi detectada.
+    // E o /neon-hud recusado nao derruba o painel, por isso o catch.
+    if (rendering) {
+      await probe($, style, probes)
+      await $.command
+        .register({ name: 'neon-hud', description: 'Copia a ultima resposta ou o ultimo bloco de codigo', argumentHint: '[copy [code]]' })
+        .catch(() => undefined)
+    }
 
     const restored = await $.store.get(`${STORE_PREFIX}${await $.session.id()}`)
     const held = await read($, tokens)
@@ -264,5 +387,43 @@ export const register: Register = on => {
       read($, context),
     ])
     return drawPane($.ui.resolve(e), { l, t, tl, v, tn, cx }, e.props.bodyColumns)
+  })
+
+  if (!rendering) return
+
+  on('command.run', { command: 'neon-hud' }, async ($, e) => {
+    const [sub, arg] = e.args.trim().split(/\s+/)
+    if (sub !== 'copy') return { text: 'Uso: /neon-hud copy [code]' }
+    const reply = (await $.session.messages()).findLast(m => m.role === 'assistant' && m.text.trim())
+    if (!reply) return { text: 'Nothing to copy yet.' }
+    const code = arg === 'code' ? parseCached(reply.text).flatMap(b => (b.kind === 'list' ? b.items.flatMap(it => it.blocks ?? []) : [b])).findLast(b => b.kind === 'code') : undefined
+    if (arg === 'code' && code?.kind !== 'code') return { text: 'The last reply has no code block.' }
+    const result = await $.ui.copy({ text: code?.kind === 'code' ? code.lines.join('\n') : reply.text })
+    return { text: result.isCopied ? `Copied the last ${code ? 'code block' : 'reply'}.` : `Copy failed: ${result.reason}` }
+  })
+
+  on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
+    if (prismantisActive($)) return next(e)
+    try {
+      const blocks = parseCached(e.props.text)
+      if (blocks.length === 0) return next(e)
+      const el = $.ui.resolve(e)
+      const { Box, Text } = el
+      const narration = style.toolStyle === 'tree-bold' && blocks.length === 1 && blocks[0]!.kind === 'paragraph'
+      const surfaceStyle = forSurface(style, e.surface)
+      const open = await read($, unfolded)
+      return (
+        <Box flexDirection="row">
+          <Box width={2} flexShrink={0}>
+            <Text color={style.theme.accent}>{e.props.isFirstOfReply ? '●' : ' '}</Text>
+          </Box>
+          <Box flexDirection="column" rowGap={1} flexGrow={1}>
+            {drawMarkdown($, el, narration ? { ...surfaceStyle, narration } : surfaceStyle, blocks, columnsOf(e.viewport), new Map(), blocks.length > 1 || hasRtl(e.props.text) ? e.props.text : undefined, open)}
+          </Box>
+        </Box>
+      )
+    } catch {
+      return next(e)
+    }
   })
 }
