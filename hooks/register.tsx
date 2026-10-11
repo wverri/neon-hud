@@ -624,13 +624,14 @@ export const register: Register = (on, options: PluginOptions) => {
           retry.left--
           $.clock.after(300, () => $.ui.invalidate('ui.render'))
         }
+        const showImages = await showsImages($)
         const el = $.ui.resolve(e) as ElementTable<'terminal'>
         const { Box } = el
         // Se a faixa de baixo falhar, a previa ainda aparece sozinha.
         const below = await next(e).catch(() => null)
         return (
           <Box flexDirection="column">
-            {drawPasteBand(el, images, e.props.bodyColumns, e.props.maxRows)}
+            {drawPasteBand(el, images, e.props.bodyColumns, e.props.maxRows, showImages)}
             {below}
           </Box>
         )

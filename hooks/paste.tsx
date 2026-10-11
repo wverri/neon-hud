@@ -28,8 +28,9 @@ export const tmpBases = (custom?: string): string[] =>
 export const caption = (image: PastedImage): string =>
   image.file === undefined ? `[Image #${image.id}] · prévia indisponível` : `[Image #${image.id}] · ${formatBytes(image.bytes ?? 0)}`
 
-export function drawPasteBand({ Box, Text, Image }: ElementTable<'terminal'>, images: PastedImage[], bodyColumns: number, maxRows: number): RenderElement {
-  const size = thumbSize(bodyColumns, maxRows, images.length)
+export function drawPasteBand({ Box, Text, Image }: ElementTable<'terminal'>, images: PastedImage[], bodyColumns: number, maxRows: number, showImages: boolean): RenderElement {
+  // Sem imagens no terminal o Image desenharia o alt, repetindo a legenda.
+  const size = showImages ? thumbSize(bodyColumns, maxRows, images.length) : null
   return (
     <Box flexDirection="column">
       <Box flexDirection="row" justifyContent="space-between" width={bodyColumns}>

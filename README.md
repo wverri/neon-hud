@@ -96,7 +96,7 @@ Se o prismantis estiver instalado e ligado, ele desenha as respostas e o neon-hu
 
 Quando você cola uma imagem no prompt, o rascunho mostra só `[Image #1]`. O neon-hud desenha, na faixa acima do prompt, uma miniatura de cada imagem colada, com o tamanho do arquivo, para você conferir se é a imagem certa antes de enviar. Apagar o `[Image #N]` do rascunho tira a miniatura, e enviar o prompt limpa a faixa.
 
-- A miniatura aparece no kitty e no Ghostty. Nos outros terminais aparece só `[Image #N] · 1.4 MB`.
+- A miniatura aparece no kitty e no Ghostty, fora do tmux. Nos outros casos aparece só `[Image #N] · 1.4 MB`.
 - Com muitas imagens ou pouca largura, ficam só as legendas.
 - `pastePreview: false` desliga a prévia. Ela não depende de `render`.
 - O neon-hud lê a imagem do arquivo que o Claude Code grava ao colar (`/tmp/claude-<uid>/…/images/N.png`). Esse caminho não faz parte da API de mods: se uma versão nova do Claude Code mudar o caminho, a prévia passa a mostrar `prévia indisponível`.

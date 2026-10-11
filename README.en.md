@@ -96,7 +96,7 @@ If prismantis is installed and enabled, it draws the replies and neon-hud shows 
 
 When you paste an image into the prompt, the draft only shows `[Image #1]`. neon-hud draws a thumbnail of each pasted image, with its file size, in the band above the prompt, so you can check it is the right image before sending. Deleting `[Image #N]` from the draft removes its thumbnail, and sending the prompt clears the band.
 
-- Thumbnails show in kitty and Ghostty. Other terminals show only `[Image #N] · 1.4 MB`.
+- Thumbnails show in kitty and Ghostty, outside tmux. Elsewhere you see only `[Image #N] · 1.4 MB`.
 - With many images or a narrow terminal, only the captions remain.
 - `pastePreview: false` turns the preview off. It does not depend on `render`.
 - neon-hud reads the image from the file Claude Code writes when you paste (`/tmp/claude-<uid>/…/images/N.png`). That path is not part of the mods API: if a new Claude Code version moves it, the preview shows `prévia indisponível`.

@@ -55,11 +55,12 @@ const band = (props: Partial<{ isWorking: boolean; hasSurvey: boolean; bodyColum
   props: { hasSurvey: false, isWorking: false, maxRows: 14, bodyColumns: 100, scroll: { offset: 0, bodyRows: 14 }, view: {}, ...props },
 })
 
-// draft e o rascunho; files diz o tamanho de cada arquivo em DIR; hasDir controla se a pasta ja existe.
+// draft e o rascunho; files diz o tamanho de cada arquivo em DIR; hasDir controla se a pasta ja existe; env e o terminal.
 const MTIME = 1_700_000_000_123.6
-const pasted = (on: On, draft: string, files: Record<string, number> = { '1.png': 1_500_000 }, state = { hasDir: true, mtimeMs: MTIME, lists: 0 }) => {
+const GHOSTTY = { TERM_PROGRAM: 'ghostty' }
+const pasted = (on: On, draft: string, files: Record<string, number> = { '1.png': 1_500_000 }, state = { hasDir: true, mtimeMs: MTIME, lists: 0 }, env: Record<string, string> = GHOSTTY) => {
   on('session.id', () => ({ value: 'sid' }))
-  mock.env(on, {})
+  mock.env(on, env)
   on('prompt.read', () => ({ value: { text: draft, cursor: draft.length } }))
   on('fs.list', (_, e) => (state.lists++, { value: state.hasDir ? (LISTING[e.path] ?? []) : [] }))
   on('fs.exists', (_, e) => ({ value: state.hasDir && e.path === DIR }))
@@ -99,6 +100,22 @@ test('sem imagem no rascunho a faixa fica com o engine', async ($, on) => {
   const ui = await $.ui.mount(band() as never)
   expect(engine.n).toBe(1)
   expect(await ui.find({ type: 'Image' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('terminal sem imagens mostra so a legenda, uma vez', async ($, on) => {
+  pasted(on, '[Image #1]', undefined, undefined, { TERM_PROGRAM: 'Apple_Terminal' })
+  const ui = await $.ui.mount(band() as never)
+  expect(await ui.find({ type: 'Image' })).toBeUndefined()
+  expect(await ui.findAll({ type: 'Text', text: '[Image #1] · 1.4 MB' })).toHaveLength(1)
+  await ui.unmount()
+})
+
+test('dentro do tmux a previa mostra so a legenda', async ($, on) => {
+  pasted(on, '[Image #1]', undefined, undefined, { TERM_PROGRAM: 'ghostty', TMUX: '/tmp/tmux-501/default,1,0' })
+  const ui = await $.ui.mount(band() as never)
+  expect(await ui.find({ type: 'Image' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: '[Image #1] · 1.4 MB' })).toBeDefined()
   await ui.unmount()
 })
 
