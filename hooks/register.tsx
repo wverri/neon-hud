@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, PluginOptions, Register, RenderElement, RenderSurface } from 'claude-code'
+import type { ElementTable, EngineInterface, PluginOptions, Register, RenderElement, RenderSurface } from 'claude-code'
 
 import type { HudAgent, HudContext, HudLive, HudPhase, HudSaved, HudTokens, HudTools, HudTurn, HudVitals } from '../types'
 import { PANE, STORE_KEEP, STORE_PREFIX, TITLE, WIDTH, drawPane, toContext } from './hud'
@@ -16,6 +16,8 @@ import { isReadOnlyCall, remember, rememberCall, renderBlocks, renderDiffCard, r
 import { hasRtl } from './render/rtl'
 import type { Style } from './render/theme'
 import { resolveStyle } from './render/theme'
+import type { PastedImage } from './paste'
+import { drawPasteBand, extractImageIds, sameIds, tmpBases } from './paste'
 
 const live = atom({ plugin: 'neon-hud', key: 'live' } as const, {
   phase: 'IDLE',
@@ -91,6 +93,41 @@ type Typeset = Exclude<Formula, { error: true }> & { tex: string }
 const formulas = atom({ plugin: 'neon-hud', key: 'render-formulas' } as const, {})
 
 const latexDir = atom({ plugin: 'neon-hud', key: 'render-dir' } as const, '')
+
+const pasteIds = atom({ plugin: 'neon-hud', key: 'paste-ids' } as const, [] as number[])
+
+// O Claude Code grava cada imagem colada em <base>/claude-<uid>/<projeto>/<sessao>/images/<N>.png.
+// O caminho nao faz parte da API de mods: se mudar, a previa mostra so "previa indisponivel".
+const imagesDirs = new Map<string, string>()
+
+const findImagesDir = async ($: EngineInterface): Promise<string | undefined> => {
+  const sid = await $.session.id()
+  const known = imagesDirs.get(sid)
+  if (known !== undefined && (await $.fs.exists(known).catch(() => false))) return known
+  const custom = await $.env.get('CLAUDE_CODE_TMPDIR').catch(() => undefined)
+  for (const base of tmpBases(custom ?? undefined)) {
+    for (const root of await $.fs.list(base).catch(() => [])) {
+      if (!/^claude-\d+$/.test(root.name)) continue
+      for (const project of await $.fs.list(`${base}/${root.name}`).catch(() => [])) {
+        if (project.kind === 'file') continue
+        const dir = `${base}/${root.name}/${project.name}/${sid}/images`
+        if (await $.fs.exists(dir).catch(() => false)) {
+          imagesDirs.set(sid, dir)
+          return dir
+        }
+      }
+    }
+  }
+  // Sem cache negativo: a pasta so nasce na primeira colagem da sessao.
+  return undefined
+}
+
+const pastedImage = async ($: EngineInterface, dir: string | undefined, id: number): Promise<PastedImage> => {
+  if (dir === undefined) return { id }
+  const file = `${dir}/${id}.png`
+  const stat = await $.fs.stat(file).catch(() => undefined)
+  return stat?.kind === 'file' ? { id, file, bytes: stat.size } : { id }
+}
 
 const showsImages = async ($: EngineInterface): Promise<boolean> => {
   if (await $.env.get('TMUX')) return false
@@ -550,6 +587,43 @@ export const register: Register = (on, options: PluginOptions) => {
     ])
     return drawPane($.ui.resolve(e), { l, t, tl, v, tn, cx }, e.props.bodyColumns)
   })
+
+  if (options.pastePreview !== false) {
+    on('prompt.edit', async ($, e, next) => {
+      const result = await next(e)
+      try {
+        const ids = extractImageIds(result.text)
+        if (!sameIds(await read($, pasteIds), ids)) await update($, pasteIds, () => ids)
+      } catch {
+        // A previa nunca pode atrapalhar a digitacao.
+      }
+      return result
+    })
+
+    on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+      if (e.surface !== 'terminal' || e.props.isWorking || e.props.hasSurvey) return next(e)
+      try {
+        // Ler o atom faz a faixa redesenhar quando o prompt.edit muda os numeros.
+        await read($, pasteIds)
+        const ids = extractImageIds((await $.prompt.read()).text)
+        if (ids.length === 0) return next(e)
+        const dir = await findImagesDir($)
+        const images = await Promise.all(ids.map(id => pastedImage($, dir, id)))
+        const el = $.ui.resolve(e) as ElementTable<'terminal'>
+        const { Box } = el
+        // Se a faixa de baixo falhar, a previa ainda aparece sozinha.
+        const below = await next(e).catch(() => null)
+        return (
+          <Box flexDirection="column">
+            {drawPasteBand(el, images, e.props.bodyColumns, e.props.maxRows)}
+            {below}
+          </Box>
+        )
+      } catch {
+        return next(e)
+      }
+    })
+  }
 
   if (!rendering) return
 

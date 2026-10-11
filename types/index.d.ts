@@ -83,6 +83,7 @@ declare module 'claude-code' {
       'render-drawn': StateFamily<number>
       'render-formulas': Record<string, unknown>
       'render-dir': string
+      'paste-ids': number[]
     }
   }
 }

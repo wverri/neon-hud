@@ -113,6 +113,12 @@
       "title": "Highlight paths",
       "description": "Colore caminhos de arquivo como ~/src/app.ts ou /var/log.",
       "default": true
+    },
+    "pastePreview": {
+      "type": "boolean",
+      "title": "Paste preview",
+      "description": "Mostra acima do prompt uma miniatura de cada imagem colada, antes do envio. A imagem aparece no kitty e no Ghostty; nos outros terminais, so o nome e o tamanho.",
+      "default": true
     }
   }
 }
