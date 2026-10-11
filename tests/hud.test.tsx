@@ -59,3 +59,46 @@ test('chamadas repetidas aparecem agrupadas em recent', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: /recent ✓Read×3/ })).toBeDefined()
   await ui.unmount()
 })
+
+const BREAKDOWN = {
+  categories: [
+    { name: 'System prompt', tokens: 2_200, color: 'promptBorder', kind: 'used', isDeferred: false },
+    { name: 'System tools', tokens: 21_000, color: 'inactive', kind: 'used', isDeferred: false },
+    { name: 'MCP tools (deferred)', tokens: 40_000, color: 'inactive', kind: 'deferred', isDeferred: true },
+    { name: 'Skills', tokens: 0, color: 'warning', kind: 'used', isDeferred: false },
+    { name: 'Messages', tokens: 233_000, color: 'purple_FOR_SUBAGENTS_ONLY', kind: 'used', isDeferred: false },
+    { name: 'Autocompact buffer', tokens: 33_000, color: 'inactive', kind: 'buffer', isDeferred: false },
+    { name: 'Free space', tokens: 710_800, color: 'promptBorder', kind: 'free', isDeferred: false },
+  ],
+  totalTokens: 256_200,
+  maxTokens: 1_000_000,
+  rawMaxTokens: 1_000_000,
+  percentage: 26,
+  autoCompactThreshold: 967_000,
+  isAutoCompactEnabled: true,
+  gridRows: [],
+  memoryFiles: [],
+  mcpTools: [],
+  agents: [],
+  model: 'opus',
+  apiUsage: null,
+  autocompactSource: 'model-default',
+}
+
+test('CONTEXT desenha a barra empilhada e a legenda por categoria', async ($, on) => {
+  on('session.usage', () => ({
+    value: { startedAt: 0, context: { tokens: 256_200, window: 1_000_000, percent: 26, breakdown: BREAKDOWN }, rateLimits: [], cost: { usd: 0 } },
+  }) as never)
+  on('session.measure', () => ({ changed: [] }) as never)
+  await $.session.measure({ context: { tokens: 256_200, window: 1_000_000, percent: 26 }, rateLimits: [], changed: [] } as never)
+  for (const bodyColumns of [32, 44, 60]) {
+    const ui = await $.ui.mount({ plugin: 'neon-hud', surface: 'terminal', ...PANE, props: { ...PANE.props, bodyColumns } })
+    expect(await ui.find({ type: 'Text', text: /256k of 1M · compacts at 967k/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: / 26% / })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^■ messages\s+233k\s+23%$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /deferred/ })).toBeUndefined()
+    const bar = await ui.find({ type: 'Text', text: /^█+.*─+░+$/ })
+    expect(bar?.text.length).toBe(bodyColumns - 6)
+    await ui.unmount()
+  }
+})

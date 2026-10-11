@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
-import type { Register, RenderChildren } from 'claude-code'
+import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 
-import type { HudAgent, HudLive, HudPhase, HudSaved, HudTokens, HudTools, HudTurn, HudVitals } from '../types'
+import type { HudAgent, HudContext, HudLive, HudPhase, HudSaved, HudSlice, HudTokens, HudTools, HudTurn, HudVitals } from '../types'
 
 const PANE = 'neon-hud'
 const TITLE = 'NEON//HUD'
@@ -66,6 +66,12 @@ const turn = atom({ plugin: 'neon-hud', key: 'turn' } as const, {
   lastCostUsd: 0,
 } as HudTurn)
 
+const context = atom({ plugin: 'neon-hud', key: 'context' } as const, null as HudContext | null)
+
+// O /context da varias linhas no mesmo cinza: cada categoria usada ganha a sua cor, em ordem.
+const SLICE_COLORS = [C.cyan, C.violet, C.green, C.amber, '#4d8dff', '#7dfff0', '#ff9e3d', C.text]
+const SLICE_GLYPH = { used: '█', free: '─', buffer: '░' } as const
+
 const STORE_PREFIX = 'session:'
 const STORE_KEEP = 30
 
@@ -81,6 +87,67 @@ function meter(pct: number, width: number): [string, string] {
   const cells = Math.max(1, width)
   const full = Math.round((Math.min(100, Math.max(0, pct)) / 100) * cells)
   return ['━'.repeat(full), '─'.repeat(cells - full)]
+}
+
+function toContext(b: {
+  categories: { name: string; tokens: number; kind: string }[]
+  totalTokens: number
+  rawMaxTokens: number
+  percentage: number
+  autoCompactThreshold?: number
+  isAutoCompactEnabled: boolean
+}): HudContext {
+  const order = { used: 0, free: 1, buffer: 2 }
+  const slices: HudSlice[] = b.categories
+    .filter(c => c.kind !== 'deferred' && c.tokens > 0)
+    .map(c => ({ name: c.name.toLowerCase(), tokens: c.tokens, color: '', kind: c.kind as HudSlice['kind'] }))
+    .sort((x, y) => order[x.kind] - order[y.kind])
+  let next = 0
+  for (const s of slices) {
+    s.color = s.kind === 'free' ? C.line : s.kind === 'buffer' ? C.dim : s.name === 'messages' ? C.pink : SLICE_COLORS[next++ % SLICE_COLORS.length]!
+  }
+  return {
+    slices,
+    total: b.totalTokens,
+    window: b.rawMaxTokens,
+    percent: b.percentage,
+    compactsAt: b.isAutoCompactEnabled ? b.autoCompactThreshold : undefined,
+  }
+}
+
+async function refreshContext($: EngineInterface) {
+  const usage = await $.session.usage({ breakdown: 'summary' })
+  const b = usage.context.breakdown
+  if (b && b.rawMaxTokens > 0) await update($, context, () => toContext(b))
+}
+
+// A barra em trechos: cada fatia leva sua parte de `width`, uma usada ao menos uma celula.
+export function ctxCells(r: HudContext, width: number) {
+  const sizes = r.slices.map(s => Math.max(s.kind === 'used' ? 1 : 0, Math.round((s.tokens / r.window) * width)))
+  // O arredondamento erra por poucas celulas: o espaco livre absorve primeiro, depois as maiores fatias.
+  let diff = width - sizes.reduce((a, n) => a + n, 0)
+  const isUsed = (i: number) => r.slices[i]!.kind === 'used'
+  const order = r.slices.map((_, i) => i).sort((a, b) => Number(isUsed(a)) - Number(isUsed(b)) || sizes[b]! - sizes[a]!)
+  for (const i of order) {
+    if (diff === 0) break
+    const size = Math.max(isUsed(i) ? 1 : 0, sizes[i]! + diff)
+    diff -= size - sizes[i]!
+    sizes[i] = size
+  }
+  return r.slices.map((s, i) => ({ color: s.color, kind: s.kind, text: SLICE_GLYPH[s.kind].repeat(sizes[i]!) })).filter(c => c.text !== '')
+}
+
+export function ktok(n: number): string {
+  if (n >= 1_000_000) return `${+(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`
+  if (n >= 10_000) return `${Math.round(n / 1000)}k`
+  if (n >= 1000) return `${+(n / 1000).toFixed(1)}k`
+  return String(Math.round(n))
+}
+
+export function share(n: number, window: number): string {
+  const p = (n / window) * 100
+  if (p > 0 && p < 0.1) return '<0.1%'
+  return `${p >= 10 ? Math.round(p) : +p.toFixed(1)}%`
 }
 
 function heat(pct: number): string {
@@ -228,8 +295,23 @@ export const register: Register = on => {
     })
 
     void $.ui.open({ id: PANE, title: TITLE, columns: WIDTH })
+    void refreshContext($).catch(() => {})
 
     return next(e)
+  })
+
+  // Depois de cada turno principal o engine mede a sessao: e a hora de recontar o contexto.
+  on('session.measure', async ($, e, next) => {
+    const r = await next(e)
+    await refreshContext($).catch(() => {})
+    return r
+  })
+
+  // Um /compact esvazia a janela sem fechar turno.
+  on('session.compact', async ($, e, next) => {
+    const r = await next(e)
+    if (!e.agentId && 'messages' in r) void refreshContext($).catch(() => {})
+    return r
   })
 
   on('session.end', async ($, e, next) => {
@@ -238,6 +320,7 @@ export const register: Register = on => {
       await update($, tokens, () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, steps: 0, turns: 0 }))
       await update($, tools, () => ({ total: 0, counts: {}, recent: [] }))
       await update($, turn, () => ({ startedAt: 0, costAtStart: 0, lastMs: 0, lastCostUsd: 0 }))
+      await update($, context, () => null)
     }
 
     return next(e)
@@ -350,7 +433,14 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
-    const [l, t, tl, v, tn] = await Promise.all([read($, live), read($, tokens), read($, tools), read($, vitals), read($, turn)])
+    const [l, t, tl, v, tn, cx] = await Promise.all([
+      read($, live),
+      read($, tokens),
+      read($, tools),
+      read($, vitals),
+      read($, turn),
+      read($, context),
+    ])
     const w = Math.max(28, e.props.bodyColumns)
     const iw = w - 6
     const half = Math.floor(iw / 2)
@@ -384,6 +474,8 @@ export const register: Register = on => {
     const promptIn = t.input + t.cacheRead + t.cacheWrite
     const hitRate = promptIn > 0 ? Math.round((t.cacheRead / promptIn) * 100) : 0
     const [ctxOn, ctxOff] = meter(v.contextPercent, iw)
+    const ctxHeat = cx ? heat(cx.compactsAt ? (cx.total / cx.compactsAt) * 100 : cx.percent) : heat(v.contextPercent)
+    const ctxNameW = Math.max(6, iw - 14)
     const avgTps = l.tpsHistory.length ? l.tpsHistory.reduce((a, b) => a + b, 0) / l.tpsHistory.length : 0
     const [sparkPad, sparkBars] = spark(l.tpsHistory, iw)
     const hours = (v.now - v.startedAt) / 3_600_000
@@ -459,18 +551,49 @@ export const register: Register = on => {
         {card(
           'CONTEXT',
           false,
-          <Text color={heat(v.contextPercent)} bold>
-            {v.contextPercent}%
+          <Text color="#0b0e1a" backgroundColor={ctxHeat} bold>
+            {` ${cx ? cx.percent : v.contextPercent}% `}
           </Text>,
-          <Box flexDirection="column">
-            <Text>
-              <Text color={heat(v.contextPercent)}>{ctxOn}</Text>
-              <Text color={C.line}>{ctxOff}</Text>
-            </Text>
-            <Text color={C.dim}>
-              <Text color={C.text}>{fmt(v.contextTokens)}</Text> of {fmt(v.contextWindow)} tokens
-            </Text>
-          </Box>,
+          cx ? (
+            <Box flexDirection="column">
+              <Text>
+                {ctxCells(cx, iw).map(c => (
+                  <Text color={c.color}>{c.text}</Text>
+                ))}
+              </Text>
+              <Text color={C.dim} wrap="truncate-end">
+                <Text color={C.text}>{ktok(cx.total)}</Text> of {ktok(cx.window)}
+                {cx.compactsAt ? (
+                  <Text>
+                    {' · compacts at '}
+                    <Text color={C.text}>{ktok(cx.compactsAt)}</Text>
+                  </Text>
+                ) : (
+                  ''
+                )}
+              </Text>
+              {cx.slices.map(s => (
+                <Text>
+                  <Text color={s.color}>{s.kind === 'used' ? '■ ' : `${SLICE_GLYPH[s.kind]} `}</Text>
+                  <Text color={s.kind === 'used' ? C.text : C.dim}>{clip(s.name, ctxNameW - 1).padEnd(ctxNameW)}</Text>
+                  <Text color={s.kind === 'used' ? C.text : C.dim} bold={s.kind === 'used'}>
+                    {ktok(s.tokens).padStart(6)}
+                  </Text>
+                  <Text color={C.dim}>{(s.kind === 'used' ? share(s.tokens, cx.window) : '').padStart(6)}</Text>
+                </Text>
+              ))}
+            </Box>
+          ) : (
+            <Box flexDirection="column">
+              <Text>
+                <Text color={ctxHeat}>{ctxOn}</Text>
+                <Text color={C.line}>{ctxOff}</Text>
+              </Text>
+              <Text color={C.dim}>
+                <Text color={C.text}>{fmt(v.contextTokens)}</Text> of {fmt(v.contextWindow)} tokens
+              </Text>
+            </Box>
+          ),
         )}
 
         {card(

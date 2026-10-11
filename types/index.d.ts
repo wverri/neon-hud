@@ -51,6 +51,16 @@ export type HudTurn = {
   lastCostUsd: number
 }
 
+export type HudSlice = { name: string; tokens: number; color: string; kind: 'used' | 'free' | 'buffer' }
+
+export type HudContext = {
+  slices: HudSlice[]
+  total: number
+  window: number
+  percent: number
+  compactsAt?: number
+}
+
 export type HudSaved = {
   savedAt: number
   live: HudLive
@@ -67,6 +77,7 @@ declare module 'claude-code' {
       tools: HudTools
       vitals: HudVitals
       turn: HudTurn
+      context: HudContext | null
     }
   }
 }

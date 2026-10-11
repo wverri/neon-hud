@@ -1,6 +1,6 @@
 {
   "name": "neon-hud",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Painel lateral cyberpunk para o Claude Code: tokens/s, contexto, tokens, custo, limites, agentes e ferramentas da sessao, ao vivo",
   "author": {
     "name": "wverri"

@@ -12,7 +12,7 @@ Painel lateral para o [Claude Code](https://claude.com/claude-code) que mostra, 
 | --- | --- |
 | Cabeçalho | Fase atual (`STANDBY`, `SENDING`, `THINKING`, `STREAMING`, `RUNNING`), modelo, tempo de sessão, turnos e requisições; durante o turno, um cronômetro e a ferramenta em execução; depois, a duração e o custo do último turno |
 | **Throughput** | Tokens por segundo (estimado durante o streaming, exato ao fim de cada requisição), média, pico e histórico das últimas 60 requisições |
-| **Context** | Ocupação da janela de contexto; a barra fica verde, amarela ou vermelha conforme enche |
+| **Context** | A janela de contexto como uma barra empilhada, uma cor por categoria do `/context` (system prompt, ferramentas, MCP, memória, skills, mensagens em rosa), com espaço livre e buffer de autocompact; abaixo, o total, onde a compactação automática roda e uma legenda com tokens e fatia de cada categoria. O selo de % fica verde, amarelo ou vermelho conforme se aproxima do ponto de compactação. Atualiza a cada turno e após `/compact` |
 | **Tokens** | Entrada, saída, leitura e escrita de cache, somando a sessão principal e os subagentes, mais a taxa de acerto de cache |
 | **Spend** | Custo da sessão em US$ (o mesmo valor do `/cost`), custo médio por turno e por hora, e os limites de 5h e 7d do plano, com o tempo até cada reset |
 | **Agents** | Subagentes da sessão, com tipo, status e descrição |
