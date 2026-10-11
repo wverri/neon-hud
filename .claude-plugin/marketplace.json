@@ -8,7 +8,7 @@
     {
       "name": "neon-hud",
       "source": "./",
-      "description": "Painel lateral cyberpunk para o Claude Code: tokens/s, contexto, tokens, custo, limites, agentes e ferramentas da sessao, ao vivo"
+      "description": "Painel lateral cyberpunk para o Claude Code (tokens/s, contexto, custo, agentes e ferramentas) e respostas renderizadas em neon: tabelas, codigo, diagramas, LaTeX e tool rows"
     }
   ]
 }

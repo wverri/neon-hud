@@ -20,6 +20,68 @@ Painel lateral para o [Claude Code](https://claude.com/claude-code) que mostra, 
 
 O cartão que está em atividade acende em ciano: Throughput durante o streaming, Agents com agente rodando, Tools com ferramenta em execução.
 
+## Respostas renderizadas
+
+O neon-hud também redesenha as respostas do Claude, as chamadas de ferramenta e o rodapé do turno com a paleta do painel. O renderizador vem do [prismantis](https://github.com/NahumLitvin/prismantis) (MIT, ver `docs/THIRD_PARTY_NOTICES.md`), com a paleta neon fixa.
+
+| Recurso | O que muda |
+| --- | --- |
+| Tabelas | Cabeçalho colorido, réguas, alinhamento `:---:`/`---:`, números coloridos e colunas que encolhem para caber no terminal |
+| Código | Cabeçalho com a linguagem e botão de copiar, realce Prism em 24 linguagens, shell colorido como prompt, numeração e dobra de blocos longos |
+| Diagramas e gráficos | Blocos `mermaid` (flowchart, sequence, state, class, ER e `xychart-beta`) viram arte colorida; se ficarem largos demais, voltam a ser código |
+| LaTeX | `$$…$$` e ` ```math ` como imagem (kitty e Ghostty); texto nos demais casos |
+| Layout | Tabelas e diagramas seguidos ficam lado a lado e quebram quando falta largura |
+| Botões de cópia | `⧉ md`, `⧉ art` e `⧉ html` nas tabelas, `[ ⧉ copy ]` em código, listas e citações; `/neon-hud copy` e `/neon-hud copy code` copiam sem mouse |
+| Linhas de ferramenta | Uma linha por chamada (`Ran gh pr view 12`, `Read ~/src/app.ts`, `Edited README.md`) com ponto de status, grupos resumidos e diffs em cartão |
+| Rodapé do turno | `✻ Baked for 6m 20s` com a duração em verde neon; a hora de término é opcional (`clock`) |
+| Texto | Negrito, itálico, tachado, código inline, links, versões, durações, percentuais e caminhos com cor própria |
+
+### LaTeX
+
+As fórmulas viram imagem com o [RaTeX](https://github.com/erweixin/RaTeX). Instale o `ratex-render` (troque o arquivo pelo da sua plataforma, como `x86_64-apple-darwin` ou `x86_64-unknown-linux-musl`):
+
+```bash
+gh release download -R erweixin/RaTeX -p 'ratex-cli-*-aarch64-apple-darwin.tar.gz'
+tar -xzf ratex-cli-*.tar.gz
+mkdir -p ~/.local/bin
+install ratex-cli-*/render ~/.local/bin/ratex-render
+```
+
+Só funciona no kitty e no Ghostty, fora do tmux, e com `latex: true`. Nos outros casos a fórmula aparece como bloco `math`.
+
+### Configuração
+
+Todas as opções ficam em `~/.claude/settings.json` (ou em `/config`); depois, `/reload`:
+
+```json
+{
+  "pluginConfigs": {
+    "neon-hud@neon-hud": {
+      "options": { "tableStyle": "grid", "clock": "24h" }
+    }
+  }
+}
+```
+
+| Opção | Valores | Padrão |
+| --- | --- | --- |
+| `render` | `true`, `false` | `true` |
+| `tableStyle` | `box`, `rules`, `grid`, `minimal` | `box` |
+| `toolRows` | `true`, `false` | `true` |
+| `toolStyle` | `chat`, `tree-dim`, `tree-bold`, `classic` | `chat` |
+| `toolOutput` | `full`, `quiet` | `full` |
+| `copyButtons` | `true`, `false` | `true` |
+| `mermaid` | `true`, `false` | `true` |
+| `mermaidAscii` | `true`, `false` | `false` |
+| `latex` | `true`, `false` | `false` |
+| `clock` | `off`, `24h`, `12h` | `off` |
+| `highlightNumbers` | `true`, `false` | `true` |
+| `highlightPaths` | `true`, `false` | `true` |
+
+### Junto com o prismantis
+
+Se o prismantis estiver instalado, as respostas ficam com ele e o neon-hud mostra só o painel. A detecção sonda o `$.prismantis` uma vez por processo; por isso, com o prismantis instalado mas desligado (`enabled: false`), o neon-hud continua cedendo as respostas ao render nativo do Claude Code, porque o `$.prismantis` ainda existe. Desinstale o prismantis se quiser o redesenho do neon-hud. `render: false` desliga o redesenho sem afetar o painel.
+
 ## Requisitos
 
 Uma versão do Claude Code com suporte a mods de *function hooks* (testado na 2.1.293). Essa API ainda é early access e pode mudar entre versões.
@@ -67,7 +129,8 @@ claude plugin uninstall neon-hud@neon-hud
 
 - Os contadores de tokens, requisições e tok/s ficam salvos por sessão: sobrevivem a reload do mod, a reiniciar o Claude Code e a `--resume`, e zeram no `/clear`. Se você instalar no meio de uma sessão, eles contam a partir dali. Custo, contexto, modelo e turnos sempre mostram o valor real desde o início da sessão.
 - Os limites de 5h e 7d só aparecem em planos de assinatura que informam esses limites.
-- O mod só observa a sessão: nunca bloqueia nem altera prompts ou chamadas de ferramenta.
+- O mod nunca bloqueia nem altera prompts ou chamadas de ferramenta e não envia nada ao modelo; ele só muda como a sessão aparece na tela.
+- Programas externos: `osascript` (macOS) ou `copyq` (Linux) só ao clicar em `⧉ html`, e `ratex-render` com `latex` ligado. Sem rede.
 
 ## Desenvolvimento
 
