@@ -39,7 +39,7 @@ export type Style = {
 
 // As mesmas cores do painel (C em hud.tsx), para a resposta e o HUD falarem a mesma lingua.
 export const NEON: Record<(typeof TOKENS)[number], string> = {
-  accent: '#00e5ff', heading: '#00e5ff', tableHeader: '#00e5ff', strong: '#ff3ea5', emphasis: '#a77bff',
+  accent: '#00e5ff', heading: '#00e5ff', tableHeader: '#00e5ff', strong: '#00e5ff', emphasis: '#a77bff',
   inlineCode: '#ffcc33', codeText: '#c9d4f2', codeCommand: '#a77bff', codeFlag: '#ff3ea5', codeString: '#3dff9a',
   codeComment: '#66708f', link: '#a77bff', path: '#ffcc33', number: '#3dff9a', quote: '#c9d4f2',
   rule: '#343c5c', tableRule: '#343c5c', bullet: '#66708f', diagram: '#343c5c', diagramText: '#c9d4f2',
