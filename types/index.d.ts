@@ -65,6 +65,7 @@ export type HudControl = {
   models: string[]
   model: string
   effort: string
+  ultracode: boolean
   isLocked: boolean
 }
 

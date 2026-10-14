@@ -5,10 +5,21 @@ import type { HudControl } from '../types'
 
 export const EFFORTS: readonly ModelEffort[] = ['low', 'medium', 'high', 'xhigh', 'max']
 
+// O card oferece so as familias; `opus[1m]`, `default` e afins continuam no /model.
+export const MODEL_FAMILIES = ['opus', 'sonnet', 'haiku'] as const
+
+export function familyOf(model: string): string | undefined {
+  return MODEL_FAMILIES.find(f => model.includes(f))
+}
+
+// O /effort responde com texto mesmo quando recusa o ultracode (sem workflows, modelo sem suporte).
+const ULTRACODE_REFUSED = /needs|isn't available|not available|invalid|failed|cannot/i
+
 const control = atom({ plugin: 'neon-hud', key: 'control' } as const, {
   models: [],
   model: '',
   effort: '',
+  ultracode: false,
   isLocked: false,
 } as HudControl)
 
@@ -60,6 +71,21 @@ export async function pickEffort($: EngineInterface, value: string): Promise<voi
     $.ui.toast(`Effort not changed: ${ran}`)
     return
   }
-  await update($, control, (c): HudControl => ({ ...c, effort: value }))
+  // `/effort <nivel>` tambem desliga o ultracode.
+  await update($, control, (c): HudControl => ({ ...c, effort: value, ultracode: false }))
   $.ui.toast(`Effort → ${value}`)
+}
+
+// Vale so para esta sessao, como o `/effort ultracode` digitado.
+export async function pickUltracode($: EngineInterface, isOn: boolean): Promise<void> {
+  const ran = await $.command.run({ command: 'effort', args: `ultracode ${isOn ? 'on' : 'off'}` }).then(
+    r => (r.text !== undefined && ULTRACODE_REFUSED.test(r.text) ? r.text : null),
+    failure,
+  )
+  if (ran !== null) {
+    $.ui.toast(`Ultracode not changed: ${ran}`)
+    return
+  }
+  await update($, control, (c): HudControl => ({ ...c, ultracode: isOn }))
+  $.ui.toast(`Ultracode ${isOn ? 'on' : 'off'}`)
 }

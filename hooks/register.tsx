@@ -3,7 +3,7 @@ import type { ElementTable, EngineInterface, PluginOptions, Register, RenderElem
 
 import type { HudAgent, HudContext, HudLive, HudPhase, HudSaved, HudTokens, HudTools, HudTurn, HudVitals } from '../types'
 import { PANE, STORE_KEEP, STORE_PREFIX, TITLE, WIDTH, drawPane, toContext } from './hud'
-import { noteEffort, pickEffort, pickModel, readControl, refreshControl } from './control'
+import { noteEffort, pickEffort, pickModel, pickUltracode, readControl, refreshControl } from './control'
 import type { ClipboardBackend } from './render/clipboard'
 import { clipboardCommand } from './render/clipboard'
 import { clockText, endedAt, withRecord } from './render/clock'
@@ -595,7 +595,7 @@ export const register: Register = (on, options: PluginOptions) => {
     const pick = {
       model: (value: string) => pickModel($, value).catch(() => $.ui.toast('Model not changed')),
       effort: (value: string) => pickEffort($, value).catch(() => $.ui.toast('Effort not changed')),
-      canSelect: e.surface !== 'mobile',
+      ultracode: (isOn: boolean) => pickUltracode($, isOn).catch(() => $.ui.toast('Ultracode not changed')),
     }
     return drawPane($.ui.resolve(e), { l, t, tl, v, tn, cx, ctl }, e.props.bodyColumns, pick)
   })

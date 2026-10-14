@@ -1,7 +1,7 @@
 import type { ElementTable, RenderChildren, RenderElement } from 'claude-code'
 
 import type { HudContext, HudControl, HudLive, HudPhase, HudSlice, HudTokens, HudTools, HudTurn, HudVitals } from '../types'
-import { EFFORTS } from './control'
+import { EFFORTS, MODEL_FAMILIES, familyOf } from './control'
 
 export const PANE = 'neon-hud'
 export const TITLE = 'NEON//HUD'
@@ -183,14 +183,78 @@ const AGENT: Record<string, { glyph: string; color: string }> = {
   killed: { glyph: '✗', color: C.red },
 }
 
-// `canSelect` e falso no app mobile, que ainda nao desenha Select.
-export type PaneActions = { model: (value: string) => void; effort: (value: string) => void; canSelect: boolean }
+export type PaneActions = { model: (value: string) => void; effort: (value: string) => void; ultracode: (isOn: boolean) => void }
+
+// Card MODEL: as familias como opcoes de radio, o effort como a barra do VS Code e o ultracode como chave.
+function drawControl({ Box, Text, Button }: ElementTable, ctl: HudControl, liveModel: string, pick: PaneActions): RenderElement {
+  const family = familyOf(ctl.model) ?? familyOf(liveModel)
+  const families = MODEL_FAMILIES.filter(f => ctl.models.includes(f))
+  const at = (EFFORTS as readonly string[]).indexOf(ctl.effort)
+  const step = (by: number) => {
+    const to = Math.min(EFFORTS.length - 1, Math.max(0, at + by))
+    if (to !== at) pick.effort(EFFORTS[to]!)
+  }
+  const label = (text: string) => <Text color={C.label}>{text.padEnd(10)}</Text>
+
+  return (
+    <Box flexDirection="column">
+      {ctl.isLocked ? (
+        <Box>
+          {label('model')}
+          <Text color={C.text}>{ctl.model || '—'}</Text>
+        </Box>
+      ) : (
+        families.length > 0 && (
+          <Box flexWrap="wrap">
+            {label('model')}
+            {families.map(f => (
+              <Box key={f} marginRight={2}>
+                <Button key={`model:${f}`} plain onPress={() => pick.model(f)}>
+                  <Text color={f === family ? C.cyan : C.dim} bold={f === family}>
+                    {f === family ? '● ' : '○ '}
+                    {f}
+                  </Text>
+                </Button>
+              </Box>
+            ))}
+          </Box>
+        )
+      )}
+      <Box>
+        {label('effort')}
+        <Button key="effort:down" plain dimColor onPress={() => step(-1)}>
+          ◂
+        </Button>
+        {EFFORTS.map((e, i) => (
+          <Box key={e} marginLeft={1}>
+            <Button key={`effort:${e}`} plain onPress={() => pick.effort(e)}>
+              <Text color={i === at ? C.pink : i < at ? C.cyan : C.line}>{i <= at ? '●' : '○'}</Text>
+            </Button>
+          </Box>
+        ))}
+        <Box marginLeft={1} marginRight={2}>
+          <Button key="effort:up" plain dimColor onPress={() => step(1)}>
+            ▸
+          </Button>
+        </Box>
+        <Text color={at < 0 ? C.dim : C.text}>{at < 0 ? '—' : ctl.effort}</Text>
+      </Box>
+      <Box>
+        {label('ultracode')}
+        <Button key="ultracode" plain onPress={() => pick.ultracode(!ctl.ultracode)}>
+          <Text color={ctl.ultracode ? C.violet : C.dim} bold={ctl.ultracode}>
+            {ctl.ultracode ? '━━● on' : '●── off'}
+          </Text>
+        </Button>
+      </Box>
+    </Box>
+  )
+}
 
 export type PaneState = { l: HudLive; t: HudTokens; tl: HudTools; v: HudVitals; tn: HudTurn; cx: HudContext | null; ctl: HudControl }
 
 export function drawPane(el: ElementTable, { l, t, tl, v, tn, cx, ctl }: PaneState, bodyColumns: number, pick: PaneActions): RenderElement {
   const { Box, Text } = el
-  const Select = pick.canSelect && 'Select' in el ? el.Select : undefined
   const w = Math.max(28, bodyColumns)
   const iw = w - 6
   const half = Math.floor(iw / 2)
@@ -282,32 +346,7 @@ export function drawPane(el: ElementTable, { l, t, tl, v, tn, cx, ctl }: PaneSta
         'MODEL',
         false,
         <Text color={C.dim}>{ctl.isLocked ? 'locked by policy' : ''}</Text>,
-        Select ? (
-          <Box flexDirection="column">
-            {ctl.models.length > 0 && !ctl.isLocked && (
-              <Select
-                key="model"
-                label="model  "
-                options={ctl.models.map(m => ({ value: m }))}
-                value={ctl.models.includes(ctl.model) ? ctl.model : undefined}
-                onSelect={(value: string) => pick.model(value)}
-              />
-            )}
-            <Select
-              key="effort"
-              label="effort "
-              options={EFFORTS.map(e => ({ value: e }))}
-              value={(EFFORTS as readonly string[]).includes(ctl.effort) ? ctl.effort : undefined}
-              onSelect={(value: string) => pick.effort(value)}
-            />
-          </Box>
-        ) : (
-          <Text color={C.dim} wrap="truncate-end">
-            <Text color={C.text}>{ctl.model || '—'}</Text>
-            {'  ·  effort '}
-            <Text color={C.text}>{ctl.effort || '—'}</Text>
-          </Text>
-        ),
+        drawControl(el, ctl, v.model || l.model, pick),
       )}
 
       {card(
