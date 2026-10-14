@@ -16,6 +16,7 @@ A cyberpunk mod for [Claude Code](https://claude.com/claude-code) with two parts
 | Section | Contents |
 | --- | --- |
 | Header | Current phase (`STANDBY`, `SENDING`, `THINKING`, `STREAMING`, `RUNNING`), model, session time, turns and requests. During a turn it shows a stopwatch and the running tool. Afterwards it shows the last turn's duration and cost. |
+| **Model** | Model and effort pickers. The models come from the `/config` Model row (the same list as `/model`) and a pick is written there, as if made in the menu. Effort (`low` to `max`) is applied through `/effort`. A pick made mid-turn takes effect from the next turn. On mobile the card only shows the current values. |
 | **Throughput** | Tokens per second (estimated while streaming, exact at the end of each request), average, peak, and a history of the last 60 requests |
 | **Context** | The context window as a stacked bar, one color per `/context` category (system prompt, tools, MCP, memory, skills, messages in pink), with free space and the autocompact buffer. Below it are the total, the point where autocompact runs, and a legend with each category's tokens and share. The % badge turns green, yellow or red as the window approaches the compaction point. Updates every turn and after `/compact`. |
 | **Tokens** | Input, output, cache read and cache write, summed across the main session and subagents, plus the cache hit rate |

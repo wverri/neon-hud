@@ -61,6 +61,13 @@ export type HudContext = {
   compactsAt?: number
 }
 
+export type HudControl = {
+  models: string[]
+  model: string
+  effort: string
+  isLocked: boolean
+}
+
 export type HudSaved = {
   savedAt: number
   live: HudLive
@@ -78,6 +85,7 @@ declare module 'claude-code' {
       vitals: HudVitals
       turn: HudTurn
       context: HudContext | null
+      control: HudControl
       'render-unfolded': string[]
       'render-turnEnds': { durationMs: number; at: number }[]
       'render-drawn': StateFamily<number>

@@ -3,6 +3,7 @@ import type { ElementTable, EngineInterface, PluginOptions, Register, RenderElem
 
 import type { HudAgent, HudContext, HudLive, HudPhase, HudSaved, HudTokens, HudTools, HudTurn, HudVitals } from '../types'
 import { PANE, STORE_KEEP, STORE_PREFIX, TITLE, WIDTH, drawPane, toContext } from './hud'
+import { noteEffort, pickEffort, pickModel, readControl, refreshControl } from './control'
 import type { ClipboardBackend } from './render/clipboard'
 import { clipboardCommand } from './render/clipboard'
 import { clockText, endedAt, withRecord } from './render/clock'
@@ -367,6 +368,8 @@ export const register: Register = (on, options: PluginOptions) => {
         description: 'Abre o painel NEON//HUD com o status da sessao',
       })
       .catch(() => undefined)
+    // Primeiro: o seletor de modelo nao depende do resto do inicio.
+    await refreshControl($).catch(() => {})
 
     // Antes do resto do painel: se algo la embaixo falhar, a copia em HTML ja foi detectada.
     // Os catch impedem que a sonda ou um /neon-hud recusado aborte a restauracao e os timers do painel;
@@ -478,6 +481,8 @@ export const register: Register = (on, options: PluginOptions) => {
     await update($, turn, s => ({ ...s, startedAt: now, costAtStart: usage.cost?.usd ?? 0 }))
     await update($, live, (s): HudLive => ({ ...s, phase: 'UPLINK', detail: '', liveTps: 0 }))
     await update($, tokens, t => ({ ...t, turns: t.turns + 1 }))
+    // Um /model digitado entre turnos muda a linha do /config: o seletor acompanha.
+    if (e.agentId === undefined) void refreshControl($).catch(() => {})
 
     return next(e)
   })
@@ -486,6 +491,7 @@ export const register: Register = (on, options: PluginOptions) => {
     const isMain = e.agentId === undefined
     if (isMain) {
       await update($, live, (s): HudLive => ({ ...s, model: e.model, phase: 'UPLINK' }))
+      await noteEffort($, e.effort)
     }
 
     let firstAt = 0
@@ -577,15 +583,21 @@ export const register: Register = (on, options: PluginOptions) => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const [l, t, tl, v, tn, cx] = await Promise.all([
+    const [l, t, tl, v, tn, cx, ctl] = await Promise.all([
       read($, live),
       read($, tokens),
       read($, tools),
       read($, vitals),
       read($, turn),
       read($, context),
+      readControl($),
     ])
-    return drawPane($.ui.resolve(e), { l, t, tl, v, tn, cx }, e.props.bodyColumns)
+    const pick = {
+      model: (value: string) => pickModel($, value).catch(() => $.ui.toast('Model not changed')),
+      effort: (value: string) => pickEffort($, value).catch(() => $.ui.toast('Effort not changed')),
+      canSelect: e.surface !== 'mobile',
+    }
+    return drawPane($.ui.resolve(e), { l, t, tl, v, tn, cx, ctl }, e.props.bodyColumns, pick)
   })
 
   if (options.pastePreview !== false) {

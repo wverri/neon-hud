@@ -1,6 +1,7 @@
 import type { ElementTable, RenderChildren, RenderElement } from 'claude-code'
 
-import type { HudContext, HudLive, HudPhase, HudSlice, HudTokens, HudTools, HudTurn, HudVitals } from '../types'
+import type { HudContext, HudControl, HudLive, HudPhase, HudSlice, HudTokens, HudTools, HudTurn, HudVitals } from '../types'
+import { EFFORTS } from './control'
 
 export const PANE = 'neon-hud'
 export const TITLE = 'NEON//HUD'
@@ -182,9 +183,14 @@ const AGENT: Record<string, { glyph: string; color: string }> = {
   killed: { glyph: '✗', color: C.red },
 }
 
-export type PaneState = { l: HudLive; t: HudTokens; tl: HudTools; v: HudVitals; tn: HudTurn; cx: HudContext | null }
+// `canSelect` e falso no app mobile, que ainda nao desenha Select.
+export type PaneActions = { model: (value: string) => void; effort: (value: string) => void; canSelect: boolean }
 
-export function drawPane({ Box, Text }: ElementTable, { l, t, tl, v, tn, cx }: PaneState, bodyColumns: number): RenderElement {
+export type PaneState = { l: HudLive; t: HudTokens; tl: HudTools; v: HudVitals; tn: HudTurn; cx: HudContext | null; ctl: HudControl }
+
+export function drawPane(el: ElementTable, { l, t, tl, v, tn, cx, ctl }: PaneState, bodyColumns: number, pick: PaneActions): RenderElement {
+  const { Box, Text } = el
+  const Select = pick.canSelect && 'Select' in el ? el.Select : undefined
   const w = Math.max(28, bodyColumns)
   const iw = w - 6
   const half = Math.floor(iw / 2)
@@ -270,6 +276,38 @@ export function drawPane({ Box, Text }: ElementTable, { l, t, tl, v, tn, cx }: P
             ' '
           )}
         </Text>
+      )}
+
+      {card(
+        'MODEL',
+        false,
+        <Text color={C.dim}>{ctl.isLocked ? 'locked by policy' : ''}</Text>,
+        Select ? (
+          <Box flexDirection="column">
+            {ctl.models.length > 0 && !ctl.isLocked && (
+              <Select
+                key="model"
+                label="model  "
+                options={ctl.models.map(m => ({ value: m }))}
+                value={ctl.models.includes(ctl.model) ? ctl.model : undefined}
+                onSelect={(value: string) => pick.model(value)}
+              />
+            )}
+            <Select
+              key="effort"
+              label="effort "
+              options={EFFORTS.map(e => ({ value: e }))}
+              value={(EFFORTS as readonly string[]).includes(ctl.effort) ? ctl.effort : undefined}
+              onSelect={(value: string) => pick.effort(value)}
+            />
+          </Box>
+        ) : (
+          <Text color={C.dim} wrap="truncate-end">
+            <Text color={C.text}>{ctl.model || '—'}</Text>
+            {'  ·  effort '}
+            <Text color={C.text}>{ctl.effort || '—'}</Text>
+          </Text>
+        ),
       )}
 
       {card(

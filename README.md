@@ -16,6 +16,7 @@ Mod cyberpunk para o [Claude Code](https://claude.com/claude-code) com duas part
 | Seção | Conteúdo |
 | --- | --- |
 | Cabeçalho | Fase atual (`STANDBY`, `SENDING`, `THINKING`, `STREAMING`, `RUNNING`), modelo, tempo de sessão, turnos e requisições; durante o turno, um cronômetro e a ferramenta em execução; depois, a duração e o custo do último turno |
+| **Model** | Seletor de modelo e de effort. Os modelos vêm da linha Model do `/config` (os mesmos do `/model`) e a troca é gravada ali, como se fosse feita no menu; o effort (`low` a `max`) é aplicado pelo `/effort`. Escolhido no meio de um turno, vale a partir do próximo. No app mobile o card só mostra os valores atuais. |
 | **Throughput** | Tokens por segundo (estimado durante o streaming, exato ao fim de cada requisição), média, pico e histórico das últimas 60 requisições |
 | **Context** | A janela de contexto como uma barra empilhada, uma cor por categoria do `/context` (system prompt, ferramentas, MCP, memória, skills, mensagens em rosa), com espaço livre e buffer de autocompact; abaixo, o total, onde a compactação automática roda e uma legenda com tokens e fatia de cada categoria. O selo de % fica verde, amarelo ou vermelho conforme se aproxima do ponto de compactação. Atualiza a cada turno e após `/compact` |
 | **Tokens** | Entrada, saída, leitura e escrita de cache, somando a sessão principal e os subagentes, mais a taxa de acerto de cache |
