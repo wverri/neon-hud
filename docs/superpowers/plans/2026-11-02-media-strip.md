@@ -265,6 +265,8 @@ Ligações a fazer:
   - **`SendUserFile`:** três GIFs → três `Button`, de `[1]` a `[3]`.
   - **Bash:** `stdout` com `/a/novo.png` (mtime dentro da janela) e `/a/velho.png` (mtime antigo) → só `[1] novo.png`. Para a janela existir, dispare `tool.call` pelo kit, ou injete `inputs`/`windows` chamando antes o hook do `ToolUse`. Se o kit não disparar `tool.call`, o teste cobre o caso "sem janela": nenhum item. Registre essa limitação no teste.
   - **`Read` de imagem:** nenhuma faixa.
+  - **Arquivo removido:** `SendUserFile` com um caminho cujo `fs.stat` nega com `ENOENT` → texto `[1] x.gif · arquivo removido`.
+  - **Mesmo arquivo em duas chamadas:** o segundo `ToolResult` com o mesmo caminho e o mesmo mtime não desenha faixa.
   - **Review Focus 3:** `isErrored: true` com `/a/novo.png` → sem faixa.
   - **Review Focus 4:** `process.run` responde `{ deny: 'Process timed out' }` → legenda sem `Raster`, sem exceção, e o resultado original continua desenhado.
   - **Ghostty:** com `TERM_PROGRAM=ghostty`, PNG local → `Image` com `source.file`, sem `process.run`.
