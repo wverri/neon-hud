@@ -19,6 +19,10 @@ import type { Style } from './render/theme'
 import { resolveStyle } from './render/theme'
 import type { PastedImage } from './paste'
 import { drawPasteBand, extractImageIds, sameIds, tmpBases } from './paste'
+import type { MediaItem } from './media'
+import { MediaRegistry, PixelCache, THUMB_ROWS, decodeBmp, drawMediaStrip, findCandidates, isGenerated } from './media'
+import type { Platform } from './media-os'
+import { PS_THUMB, decodeSteps, joinPath, openArgv, platformOf, psThumbPath, thumbBmpPath, thumbSteps } from './media-os'
 
 const live = atom({ plugin: 'neon-hud', key: 'live' } as const, {
   phase: 'IDLE',
@@ -351,6 +355,253 @@ const markExpanded = (id: string) => {
   if (expandedCalls.size > 500) expandedCalls.delete(expandedCalls.values().next().value!)
 }
 
+// Tamanho fixo da conversao: o Raster reamostra para a largura que couber (no maximo 16), entao um BMP so serve a qualquer faixa.
+const THUMB_W = 16
+const THUMB_H = 2 * THUMB_ROWS
+const MEDIA_KEEP = 500
+// Caminhos locais examinados por chamada, depois de tirar os repetidos.
+const MAX_LOCAL_EXAMINED = 32
+
+type MediaJob = { item: MediaItem; file: string; mtimeMs: number; decodeFrom?: string; usePng?: boolean }
+
+type MediaState = {
+  style: Style
+  windows: Map<string, { start: number; end?: number }>
+  inputs: Map<string, { tool: string; input: unknown }>
+  registry: MediaRegistry
+  pixels: PixelCache
+  items: Map<string, MediaItem[]>
+  // Chamadas ja examinadas sem midia: evita stat repetido a cada redesenho.
+  empty: Set<string>
+  pending: Map<string, Promise<MediaItem[]>>
+  platform?: Promise<Platform>
+  ffmpeg?: Promise<string | null>
+  readyDirs: Set<string>
+  batch: MediaJob[]
+  queue: Promise<void>
+}
+
+const newMediaState = (style: Style): MediaState => ({
+  style,
+  windows: new Map(),
+  inputs: new Map(),
+  registry: new MediaRegistry(),
+  pixels: new PixelCache(),
+  items: new Map(),
+  empty: new Set(),
+  pending: new Map(),
+  readyDirs: new Set(),
+  batch: [],
+  queue: Promise.resolve(),
+})
+
+const keepLast = <V,>(map: Map<string, V>, key: string, value: V) => {
+  map.delete(key)
+  map.set(key, value)
+  if (map.size > MEDIA_KEEP) map.delete(map.keys().next().value!)
+}
+
+const fileName = (p: string) => p.split(/[\\/]/).pop() || p
+const pixelKey = (file: string, mtimeMs: number) => `${file}\0${mtimeMs}\0${THUMB_W}x${THUMB_H}`
+const fromBase64 = (b64: string) => Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+
+const mediaDir = async ($: EngineInterface, m: MediaState): Promise<string> => {
+  const windows = (await mediaPlatform($, m)) === 'windows'
+  // Variavel vazia conta como ausente: || em vez de ??.
+  const tmpdir = (await $.env.get('TMPDIR').catch(() => undefined)) || undefined
+  const tmp = (windows ? ((await $.env.get('TEMP').catch(() => undefined)) || (await $.env.get('TMP').catch(() => undefined)) || tmpdir) : tmpdir) || '/tmp'
+  const base = tmp.replace(/[\\/]+$/, '')
+  const name = `neon-hud-media-${await $.session.id()}`
+  return windows ? `${base.replace(/\//g, '\\')}\\${name}` : `${base}/${name}`
+}
+
+const mediaPlatform = ($: EngineInterface, m: MediaState): Promise<Platform> =>
+  (m.platform ??= (async () => platformOf({ OS: (await $.env.get('OS').catch(() => undefined)) ?? undefined }, (await $.fs.stat('/usr/bin/sips').catch(() => null))?.kind === 'file'))())
+
+// Caminho absoluto do ffmpeg: o processo filho pode nao herdar o PATH do shell do usuario.
+const ffmpegPath = ($: EngineInterface, m: MediaState, platform: Platform): Promise<string | null> =>
+  (m.ffmpeg ??= (async () => {
+    for (const path of ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg']) if ((await $.fs.stat(path).catch(() => null))?.kind === 'file') return path
+    const found = await $.process.run(platform === 'windows' ? ['where.exe', 'ffmpeg'] : ['which', 'ffmpeg'], { timeoutMs: 3000 }).catch(() => null)
+    if (found?.exitCode !== 0) return null
+    return found.stdout.split(/\r?\n/).map(line => line.trim()).find(line => line !== '') ?? null
+  })())
+
+// PowerShell carrega o .NET e o qlmanage sobe o Quick Look: os dois passam de 3 s a frio.
+const SLOW_STEPS = new Set(['powershell', 'qlmanage'])
+
+const runSteps = async ($: EngineInterface, steps: string[][]): Promise<boolean> => {
+  if (steps.length === 0) return false
+  for (const argv of steps) if ((await $.process.run(argv, { timeoutMs: SLOW_STEPS.has(argv[0] ?? '') ? 10000 : 3000 }).catch(() => null))?.exitCode !== 0) return false
+  return true
+}
+
+const convertMedia = async ($: EngineInterface, m: MediaState, job: MediaJob): Promise<void> => {
+  const { item, file, mtimeMs } = job
+  try {
+    const platform = await mediaPlatform($, m)
+    if (job.decodeFrom !== undefined && !(await runSteps($, decodeSteps(platform, job.decodeFrom, file)))) {
+      item.state = 'nothumb'
+      return
+    }
+    if (job.usePng) {
+      item.pngFile = file
+      item.state = 'ready'
+      return
+    }
+    const dir = await mediaDir($, m)
+    // sips e qlmanage nao criam a pasta de saida; o fs.write cria. No Windows o arquivo gravado e o proprio script.
+    if (!m.readyDirs.has(dir)) {
+      await (platform === 'windows' ? $.fs.write(psThumbPath(dir), PS_THUMB) : $.fs.write(joinPath(dir, '.neon-hud'), ''))
+      m.readyDirs.add(dir)
+    }
+    const ffmpeg = item.media === 'video' ? await ffmpegPath($, m, platform) : null
+    let ok = await runSteps($, thumbSteps(platform, item.media, file, dir, THUMB_W, THUMB_H, ffmpeg, mtimeMs))
+    if (!ok && platform === 'macos' && item.media === 'video' && ffmpeg !== null) ok = await runSteps($, thumbSteps('linux', 'video', file, dir, THUMB_W, THUMB_H, ffmpeg, mtimeMs))
+    const bmp = ok ? await $.fs.read(thumbBmpPath(dir, file, mtimeMs), { as: 'bytes' }).catch(() => null) : null
+    const pixels = bmp ? decodeBmp(fromBase64(bmp.base64)) : null
+    if (!pixels) {
+      item.state = 'nothumb'
+      return
+    }
+    m.pixels.set(pixelKey(file, mtimeMs), pixels)
+    item.pixels = pixels
+    item.state = 'ready'
+  } catch {
+    item.state = 'nothumb'
+  } finally {
+    $.ui.invalidate('ui.render')
+  }
+}
+
+// Fila fora do caminho da chamada e do desenho: o primeiro desenho mostra "carregando…".
+const enqueueMedia = ($: EngineInterface, m: MediaState, job: MediaJob) => {
+  if (m.batch.length === 0) {
+    $.clock.after(0, () => {
+      const jobs = m.batch
+      m.batch = []
+      m.queue = m.queue
+        .then(async () => {
+          for (const j of jobs) await convertMedia($, m, j)
+        })
+        .catch(() => undefined)
+    })
+  }
+  m.batch.push(job)
+}
+
+const examineMedia = async ($: EngineInterface, m: MediaState, toolUseId: string, tool: string, input: unknown, output: unknown): Promise<MediaItem[]> => {
+  const { style } = m
+  await locate($, style)
+  const candidates = findCandidates(tool, input ?? m.inputs.get(toolUseId)?.input, output, style.cwd, style.home)
+  if (candidates.length === 0) return []
+  const showImages = await showsImages($)
+  const w = m.windows.get(toolUseId)
+  const window = w ? { start: w.start, end: w.end ?? (await $.clock.now()) } : undefined
+  const items: MediaItem[] = []
+  let locals = 0
+  for (const [i, c] of candidates.entries()) {
+    if (c.kind === 'remote') {
+      const n = m.registry.claimRemote(c.url)
+      if (n === null) continue
+      m.registry.remember(n, { url: c.url, name: c.url })
+      items.push({ n, name: c.url, media: c.media, state: 'ready', url: c.url })
+      continue
+    }
+    if (c.kind === 'embedded') {
+      const n = m.registry.claim(`embedded:${toolUseId}:${i}`, 0)
+      if (n === null) continue
+      const dir = await mediaDir($, m)
+      const b64 = joinPath(dir, `emb-${n}.b64`)
+      const file = joinPath(dir, `emb-${n}.${c.ext}`)
+      const item: MediaItem = { n, name: fileName(file), media: 'image', state: 'loading', path: file }
+      m.registry.remember(n, { path: file, name: item.name })
+      items.push(item)
+      if (await $.fs.write(b64, c.base64).then(() => true, () => false)) enqueueMedia($, m, { item, file, mtimeMs: 0, decodeFrom: b64, usePng: showImages && c.ext === 'png' })
+      else item.state = 'nothumb'
+      continue
+    }
+    // Um ls com centenas de imagens nao pode virar centenas de stat dentro do desenho.
+    if (++locals > MAX_LOCAL_EXAMINED) continue
+    const stat = await $.fs.stat(c.path).catch(() => null)
+    const name = fileName(c.path)
+    if (stat?.kind !== 'file') {
+      // So entregas explicitas avisam que o arquivo sumiu; um caminho solto na saida nao prova nada.
+      const n = c.always ? m.registry.claim(c.path, -1) : null
+      if (n === null) continue
+      m.registry.remember(n, { path: c.path, name })
+      items.push({ n, name, media: c.media, state: 'missing', path: c.path })
+      continue
+    }
+    if (!isGenerated(stat.mtimeMs, window, c.always)) continue
+    const n = m.registry.claim(c.path, stat.mtimeMs)
+    if (n === null) continue
+    m.registry.remember(n, { path: c.path, name })
+    const item: MediaItem = { n, name, media: c.media, state: 'loading', path: c.path }
+    items.push(item)
+    const cached = m.pixels.get(pixelKey(c.path, stat.mtimeMs))
+    if (showImages && c.media === 'image' && /\.png$/i.test(c.path)) Object.assign(item, { pngFile: c.path, state: 'ready' })
+    else if (cached) Object.assign(item, { pixels: cached, state: 'ready' })
+    else enqueueMedia($, m, { item, file: c.path, mtimeMs: stat.mtimeMs })
+  }
+  return items
+}
+
+/** Itens da faixa de uma chamada; o claim acontece uma vez por tool_use_id e redesenhos reusam o resultado. */
+const mediaFor = async ($: EngineInterface, m: MediaState, toolUseId: string, tool: string, input: unknown, output: unknown, isErrored: boolean): Promise<MediaItem[]> => {
+  if (isErrored) return []
+  const known = m.items.get(toolUseId)
+  if (known) return known
+  if (m.empty.has(toolUseId)) return []
+  // Dois desenhos simultaneos da mesma chamada esperam o mesmo exame: o segundo nao pode perder o claim.
+  const running = m.pending.get(toolUseId)
+  if (running) return running
+  const work = examineMedia($, m, toolUseId, tool, input, output)
+    .then(items => {
+      if (items.length > 0) m.items.set(toolUseId, items)
+      else {
+        m.empty.add(toolUseId)
+        if (m.empty.size > MEDIA_KEEP) m.empty.delete(m.empty.values().next().value!)
+      }
+      return items
+    })
+    .finally(() => m.pending.delete(toolUseId))
+  m.pending.set(toolUseId, work)
+  return work
+}
+
+/** Abre a midia N da sessao e devolve o texto da resposta (Task 5 reusa no /neon-hud open). */
+const openMedia = async ($: EngineInterface, m: MediaState, n: number): Promise<string> => {
+  const entry = m.registry.get(n)
+  const target = entry?.path ?? entry?.url
+  if (!entry || target === undefined) return `Mídia ${n} não existe nesta sessão.`
+  const platform = await mediaPlatform($, m)
+  const failure = await $.process.run(openArgv(platform, target), { timeoutMs: 5000 }).then(
+    // O explorer.exe sai com 1 mesmo quando abre: no Windows basta ter rodado.
+    r => (r.exitCode === 0 || platform === 'windows' ? null : r.stderr.trim() || `saiu com ${r.exitCode}`),
+    (err: unknown) => (err instanceof Error ? err.message : String(err)),
+  )
+  return failure === null ? `Abrindo ${entry.name}` : `não consegui abrir: ${failure}`
+}
+
+const withStrip = async ($: EngineInterface, m: MediaState, e: { surface: RenderSurface; viewport?: { columns?: number } }, drawn: RenderElement | null | undefined, items: MediaItem[]): Promise<RenderElement> => {
+  const el = $.ui.resolve(e as never) as ElementTable<'terminal'>
+  const showImages = await showsImages($)
+  const onOpen = (n: number) => void pressMedia($, m, n)
+  return (
+    <el.Box flexDirection="column">
+      {drawn}
+      {drawMediaStrip(el, items, columnsOf(e.viewport), showImages, onOpen)}
+    </el.Box>
+  )
+}
+
+// No clique so a falha aparece, num toast.
+const pressMedia = async ($: EngineInterface, m: MediaState, n: number): Promise<void> => {
+  const text = await openMedia($, m, n).catch(() => 'não consegui abrir')
+  if (!text.startsWith('Abrindo')) $.ui.toast(text)
+}
+
 export const register: Register = (on, options: PluginOptions) => {
   const rendering = options.render !== false
   const style = resolveStyle(options)
@@ -360,6 +611,9 @@ export const register: Register = (on, options: PluginOptions) => {
   const forSurface = (base: Style, surface: RenderSurface): Style => (surface === 'terminal' || !base.htmlCopy ? base : { ...base, htmlCopy: null })
   const probes: Probes = {}
   const prismantis: Prismantis = {}
+  const mediaOn = options.mediaStrip !== false
+  const media = newMediaState(style)
+  const { windows, inputs } = media
 
   on('session.start', async ($, e, next) => {
     await $.command
@@ -381,8 +635,15 @@ export const register: Register = (on, options: PluginOptions) => {
       })
       // Com o prismantis ativo o latex nao e usado aqui; o catch garante que nada disso aborte o session.start.
       if (!(await prismantisActive($, prismantis))) void latexEngine($, latex).catch(() => undefined)
+    }
+    // O open vale tambem com render desligado, desde que a faixa esteja ligada.
+    if (rendering || mediaOn) {
       await $.command
-        .register({ name: 'neon-hud', description: 'Copia a ultima resposta ou o ultimo bloco de codigo', argumentHint: '[copy [code]]' })
+        .register(
+          rendering
+            ? { name: 'neon-hud', description: 'Copia a ultima resposta ou o ultimo bloco de codigo, ou abre uma midia', argumentHint: '[copy [code] | open [N]]' }
+            : { name: 'neon-hud', description: 'Abre uma midia gerada nesta sessao', argumentHint: 'open [N]' },
+        )
         .catch(() => undefined)
     }
 
@@ -553,7 +814,21 @@ export const register: Register = (on, options: PluginOptions) => {
       await update($, live, (s): HudLive => ({ ...s, phase: 'EXEC', detail: tool }))
     }
 
+    // A faixa so mede o tempo aqui: nada disso pode mudar ou atrasar o resultado.
+    if (mediaOn) {
+      try {
+        const { tool: name, tool_use_id: _id, agentId: _agent, ...input } = e as unknown as Record<string, unknown>
+        keepLast(windows, id, { start: await $.clock.now() })
+        keepLast(inputs, id, { tool: String(name), input })
+      } catch {
+        // Sem janela a faixa so mostra entregas explicitas; a chamada segue igual.
+      }
+    }
     const ran = await next(e)
+    if (mediaOn) {
+      const w = windows.get(id)
+      if (w) w.end = await $.clock.now().catch(() => w.start)
+    }
     const isError = 'isError' in ran && ran.isError === true
     await update($, tools, t => ({
       ...t,
@@ -653,6 +928,61 @@ export const register: Register = (on, options: PluginOptions) => {
     })
   }
 
+  // A faixa vem antes do resto: registrada primeiro, envolve o que os hooks de baixo (ou o engine, ou o prismantis) desenharem,
+  // e por isso independe de render, toolRows e prismantis.
+  if (mediaOn) {
+    on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
+      keepLast(inputs, e.props.tool_use_id, { tool: e.props.tool, input: e.props.input })
+      return next(e)
+    })
+    on('ui.render', { component: 'ToolGroup' }, async ($, e, next) => {
+      for (const call of e.props.calls) if (call.tool_use_id) keepLast(inputs, call.tool_use_id, { tool: call.tool, input: call.input })
+      const drawn = await next(e)
+      // Expandido, cada ToolResult desenha a propria faixa.
+      if (e.surface !== 'terminal' || e.props.isExpanded) return drawn
+      try {
+        const done = e.props.calls.filter(call => call.tool_use_id && !call.isRunning && call.output !== undefined)
+        const items = (await Promise.all(done.map(call => mediaFor($, media, call.tool_use_id!, call.tool, call.input, call.output, call.isErrored)))).flat()
+        return items.length > 0 ? await withStrip($, media, e, drawn, items) : drawn
+      } catch {
+        return drawn
+      }
+    })
+    on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
+      const drawn = await next(e)
+      if (e.surface !== 'terminal') return drawn
+      try {
+        const items = await mediaFor($, media, e.props.tool_use_id, e.props.tool, undefined, e.props.output, e.props.isErrored)
+        return items.length > 0 ? await withStrip($, media, e, drawn, items) : drawn
+      } catch {
+        return drawn
+      }
+    })
+  }
+
+  if (rendering || mediaOn) {
+    on('command.run', { command: 'neon-hud' }, async ($, e) => {
+      const [sub, arg] = e.args.trim().split(/\s+/)
+      const usage = rendering ? 'Uso: /neon-hud copy [code] | open [N]' : 'Uso: /neon-hud open [N]'
+      if (sub === 'open') {
+        if (arg === undefined || arg === '') {
+          const recent = media.registry.recent(10)
+          return { text: recent.length ? recent.map(r => `[${r.n}] ${r.name}`).join('\n') : 'Nenhuma mídia nesta sessão.' }
+        }
+        // Number aceitaria 0x1, 1e0 e +1.
+        if (!/^\d+$/.test(arg)) return { text: usage }
+        return { text: await openMedia($, media, Number(arg)).catch(() => 'não consegui abrir') }
+      }
+      if (sub !== 'copy' || !rendering) return { text: usage }
+      const reply = (await $.session.messages()).findLast(m => m.role === 'assistant' && m.text.trim())
+      if (!reply) return { text: 'Nothing to copy yet.' }
+      const code = arg === 'code' ? parseCached(reply.text).flatMap(b => (b.kind === 'list' ? b.items.flatMap(it => it.blocks ?? []) : [b])).findLast(b => b.kind === 'code') : undefined
+      if (arg === 'code' && code?.kind !== 'code') return { text: 'The last reply has no code block.' }
+      const result = await $.ui.copy({ text: code?.kind === 'code' ? code.lines.join('\n') : reply.text })
+      return { text: result.isCopied ? `Copied the last ${code ? 'code block' : 'reply'}.` : `Copy failed: ${result.reason}` }
+    })
+  }
+
   if (!rendering) return
 
   on('ui.render', { component: 'TurnDuration' }, async ($, e, next) => {
@@ -698,17 +1028,6 @@ export const register: Register = (on, options: PluginOptions) => {
       return shell ? renderShellResult(el, style, e.props.output) : next(e)
     })
   }
-
-  on('command.run', { command: 'neon-hud' }, async ($, e) => {
-    const [sub, arg] = e.args.trim().split(/\s+/)
-    if (sub !== 'copy') return { text: 'Uso: /neon-hud copy [code]' }
-    const reply = (await $.session.messages()).findLast(m => m.role === 'assistant' && m.text.trim())
-    if (!reply) return { text: 'Nothing to copy yet.' }
-    const code = arg === 'code' ? parseCached(reply.text).flatMap(b => (b.kind === 'list' ? b.items.flatMap(it => it.blocks ?? []) : [b])).findLast(b => b.kind === 'code') : undefined
-    if (arg === 'code' && code?.kind !== 'code') return { text: 'The last reply has no code block.' }
-    const result = await $.ui.copy({ text: code?.kind === 'code' ? code.lines.join('\n') : reply.text })
-    return { text: result.isCopied ? `Copied the last ${code ? 'code block' : 'reply'}.` : `Copy failed: ${result.reason}` }
-  })
 
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
     if (await prismantisActive($, prismantis)) return next(e)

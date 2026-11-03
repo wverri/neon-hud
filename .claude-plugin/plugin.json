@@ -1,6 +1,6 @@
 {
   "name": "neon-hud",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "description": "Painel lateral cyberpunk para o Claude Code (tokens/s, contexto, custo, agentes e ferramentas) e respostas renderizadas em neon: tabelas, codigo, diagramas, LaTeX e tool rows",
   "author": {
     "name": "wverri"
@@ -19,7 +19,8 @@
     "tables",
     "mermaid",
     "paste",
-    "images"
+    "images",
+    "media"
   ],
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -120,6 +121,12 @@
       "type": "boolean",
       "title": "Paste preview",
       "description": "Mostra acima do prompt uma miniatura de cada imagem colada, antes do envio. A imagem aparece no kitty e no Ghostty; nos outros terminais, so o nome e o tamanho.",
+      "default": true
+    },
+    "mediaStrip": {
+      "type": "boolean",
+      "title": "Media strip",
+      "description": "Mostra miniaturas clicaveis da midia gerada ou entregue (prints, imagens, GIFs, videos) sob a ferramenta que a gerou. Funciona no Terminal do macOS e no Windows com blocos coloridos.",
       "default": true
     }
   }
