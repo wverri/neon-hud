@@ -44,21 +44,32 @@ const TRAIL = /[)\]"'`>,;:.]+$/
 
 type Hit = { kind: 'local'; path: string } | { kind: 'remote'; url: string }
 
+// Pedacos entre = : " ' { } > , mantendo a unidade do Windows (C:\) e o esquema de URL inteiros.
+const PIECE = /(?:(?<![A-Za-z0-9])[A-Za-z]:[\\/]|https?:\/\/|[^="'{}>,:])+/gi
+const isUrl = (s: string): boolean => /^https?:\/\//i.test(s)
+
+const pushToken = (raw: string, cwd: string, home: string, out: Hit[]): void => {
+  const token = raw.replace(LEAD, '').replace(TRAIL, '')
+  if (isUrl(token)) {
+    if (mediaKindOf(token.replace(/[?#].*$/, '')) !== null) out.push({ kind: 'remote', url: token })
+  } else if (mediaKindOf(token) !== null) {
+    out.push({ kind: 'local', path: resolvePath(token, cwd, home) })
+  }
+}
+
 const scanText = (text: string, cwd: string, home: string, out: Hit[]): void => {
   for (const m of text.matchAll(TOKEN)) {
     const quoted = m[2]
     if (quoted !== undefined) {
       const inner = quoted.trim()
-      if (!/^https?:\/\//i.test(inner) && mediaKindOf(inner) !== null) out.push({ kind: 'local', path: resolvePath(inner, cwd, home) })
+      if (!isUrl(inner) && mediaKindOf(inner) !== null) out.push({ kind: 'local', path: resolvePath(inner, cwd, home) })
       else scanText(inner, cwd, home, out)
       continue
     }
-    const token = (m[3] ?? '').replace(LEAD, '').replace(TRAIL, '')
-    if (/^https?:\/\//i.test(token)) {
-      if (mediaKindOf(token.replace(/[?#].*$/, '')) !== null) out.push({ kind: 'remote', url: token })
-    } else if (mediaKindOf(token) !== null) {
-      out.push({ kind: 'local', path: resolvePath(token, cwd, home) })
-    }
+    const raw = m[3] ?? ''
+    // URL inteira fica junta (a query tem = e :); o resto pode vir grudado em JSON, --out= ou 2>.
+    if (isUrl(raw.replace(LEAD, ''))) pushToken(raw, cwd, home, out)
+    else for (const piece of raw.match(PIECE) ?? []) pushToken(piece, cwd, home, out)
   }
 }
 
@@ -77,6 +88,8 @@ const outputTexts = (output: unknown, texts: string[], embedded: Candidate[]): v
       return
     }
     for (const key of ['text', 'stdout', 'stderr'] as const) if (typeof output[key] === 'string') texts.push(output[key])
+    // Resultado de MCP: { content: McpContentBlock[], isError, structuredContent? }.
+    for (const key of ['content', 'structuredContent'] as const) if (Array.isArray(output[key])) outputTexts(output[key], texts, embedded)
   }
 }
 
@@ -84,11 +97,13 @@ export function findCandidates(tool: string, input: unknown, output: unknown, cw
   if (tool === 'Read') return []
   const always = tool === 'SendUserFile'
   const result: Candidate[] = []
-  const seen = new Set<string>()
+  const seen = new Map<string, Candidate>()
   const add = (c: Candidate, key: string): void => {
-    if (seen.has(key)) return
-    seen.add(key)
-    result.push(c)
+    const known = seen.get(key)
+    if (known === undefined) {
+      seen.set(key, c)
+      result.push(c)
+    } else if (known.kind === 'local' && c.kind === 'local' && c.always) known.always = true
   }
   const addHits = (hits: Hit[], alwaysLocal: boolean): void => {
     for (const hit of hits) {

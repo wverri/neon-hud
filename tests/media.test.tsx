@@ -69,6 +69,32 @@ test('bloco de imagem de MCP vira embutido', async () => {
   expect(findCandidates('mcp__x__shot', {}, alt, cwd, home)).toEqual([{ kind: 'embedded', base64: 'BBBB', ext: 'png' }])
 })
 
+test('resultado de MCP { content, isError } entra nos blocos', async () => {
+  const output = { content: [{ type: 'text', text: 'salvo em /a/x.png' }, { type: 'image', data: 'CCCC', mimeType: 'image/png' }], isError: false }
+  expect(findCandidates('mcp__x__shot', {}, output, cwd, home)).toEqual([
+    { kind: 'local', path: '/a/x.png', media: 'image', always: false },
+    { kind: 'embedded', base64: 'CCCC', ext: 'png' },
+  ])
+  const structured = { content: [], structuredContent: [{ type: 'image', data: 'DDDD', mimeType: 'image/webp' }], isError: false }
+  expect(findCandidates('mcp__x__shot', {}, structured, cwd, home)).toEqual([{ kind: 'embedded', base64: 'DDDD', ext: 'webp' }])
+})
+
+test('caminho grudado em pontuacao sai inteiro', async () => {
+  const one = (text: string, c = cwd) => findCandidates('Bash', {}, { stdout: text }, c, home).map(x => (x.kind === 'local' ? x.path : ''))
+  expect(one('{"file":"/a/x.png"}')).toEqual(['/a/x.png'])
+  expect(one('--out=x.png')).toEqual(['/proj/x.png'])
+  expect(one('--out="x.png"')).toEqual(['/proj/x.png'])
+  expect(one('2>out.png')).toEqual(['/proj/out.png'])
+  expect(one('{"path":"C:\\out\\a.png"}', 'C:\\proj')).toEqual(['C:\\out\\a.png'])
+  expect(one('--out=C:\\out\\b.png', 'C:\\proj')).toEqual(['C:\\out\\b.png'])
+  expect(findCandidates('Bash', {}, { stdout: '{"url":"https://h/y.mp4"}' }, cwd, home)).toEqual([{ kind: 'remote', url: 'https://h/y.mp4', media: 'video' }])
+})
+
+test('repetido local herda always de qualquer ocorrencia', async () => {
+  const out = findCandidates('SendUserFile', { message: 'veja /a/x.png', files: ['/a/x.png'] }, 'ok', cwd, home)
+  expect(out).toEqual([{ kind: 'local', path: '/a/x.png', media: 'image', always: true }])
+})
+
 test('Write de imagem vira candidato local', async () => {
   const out = findCandidates('Write', { file_path: '/a/out.webp' }, 'ok', cwd, home)
   expect(out).toEqual([{ kind: 'local', path: '/a/out.webp', media: 'image', always: false }])
