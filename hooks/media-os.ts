@@ -21,16 +21,31 @@ export function thumbBmpPath(outDir: string, file: string, mtimeMs: number): str
   return `${outDir}/thumb-${fnv1a(file + mtimeMs)}.bmp`
 }
 
-// Os caminhos entram so por $args: nada e interpolado no script.
+// Conteudo do .ps1 rodado com -File: os caminhos chegam como parametros, nunca
+// como codigo (com -Command o PowerShell re-tokeniza e executa o nome do arquivo).
 export const PS_THUMB = [
-  'Add-Type -AssemblyName System.Drawing;',
-  '$src = [System.Drawing.Image]::FromFile($args[0]);',
-  '$bmp = New-Object System.Drawing.Bitmap([int]$args[2], [int]$args[3], [System.Drawing.Imaging.PixelFormat]::Format24bppRgb);',
-  '$g = [System.Drawing.Graphics]::FromImage($bmp);',
-  '$g.DrawImage($src, 0, 0, [int]$args[2], [int]$args[3]);',
-  '$bmp.Save($args[1], [System.Drawing.Imaging.ImageFormat]::Bmp);',
-  '$g.Dispose(); $bmp.Dispose(); $src.Dispose()',
-].join(' ')
+  'param([string]$in, [string]$out, [int]$w, [int]$h)',
+  '$src = $null; $bmp = $null; $g = $null',
+  'try {',
+  '  Add-Type -AssemblyName System.Drawing',
+  '  $src = [System.Drawing.Image]::FromFile($in)',
+  '  $bmp = New-Object System.Drawing.Bitmap($w, $h, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)',
+  '  $g = [System.Drawing.Graphics]::FromImage($bmp)',
+  '  $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic',
+  '  $g.DrawImage($src, 0, 0, $w, $h)',
+  '  $bmp.Save($out, [System.Drawing.Imaging.ImageFormat]::Bmp)',
+  '} finally {',
+  '  if ($g) { $g.Dispose() }',
+  '  if ($bmp) { $bmp.Dispose() }',
+  '  if ($src) { $src.Dispose() }',
+  '}',
+  '',
+].join('\n')
+
+/** Onde o chamador grava PS_THUMB (com $.fs.write) antes de rodar o passo do Windows. */
+export function psThumbPath(outDir: string): string {
+  return `${outDir}${outDir.includes('\\') ? '\\' : '/'}neon-thumb.ps1`
+}
 
 function baseName(p: string): string {
   return p.split(/[\\/]/).pop() || p
@@ -42,6 +57,7 @@ function baseName(p: string): string {
  * localizar o bmp. [] significa sem conversor: fica so a legenda.
  * No macOS, video usa qlmanage + sips e ignora hasFfmpeg: se o qlmanage falhar,
  * o chamador (Task 4) tenta thumbSteps('linux', 'video', ..., true) para o ffmpeg.
+ * No Windows, o chamador deve gravar PS_THUMB em psThumbPath(outDir) antes do passo.
  * No Linux e no Windows, video so converte com ffmpeg.
  */
 export function thumbSteps(platform: Platform, media: MediaKind, file: string, outDir: string, width: number, height: number, hasFfmpeg: boolean, mtimeMs = 0): string[][] {
@@ -60,8 +76,8 @@ export function thumbSteps(platform: Platform, media: MediaKind, file: string, o
     return [['ffmpeg', '-y', '-loglevel', 'error', '-i', file, '-frames:v', '1', '-vf', `scale=${w}:${h}`, bmp]]
   }
   if (platform === 'macos') return [['sips', '-s', 'format', 'bmp', '-z', h, w, file, '--out', bmp]]
-  if (platform === 'windows') return [['powershell', '-NoProfile', '-NonInteractive', '-Command', PS_THUMB, file, bmp, w, h]]
-  return [['magick', file, '-resize', `${w}x${h}!`, bmp]]
+  if (platform === 'windows') return [['powershell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psThumbPath(outDir), file, bmp, w, h]]
+  return [['magick', `${file}[0]`, '-resize', `${w}x${h}!`, bmp]]
 }
 
 export function decodeSteps(platform: Platform, b64File: string, outFile: string): string[][] {

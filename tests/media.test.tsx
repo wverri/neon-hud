@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
 import { MediaRegistry, PixelCache, decodeBmp, drawMediaStrip, findCandidates, isGenerated, mediaKindOf, rasterCells, thumbColumns, toRgba, type MediaItem } from '../hooks/media'
-import { PS_THUMB, decodeSteps, openArgv, platformOf, thumbBmpPath, thumbSteps } from '../hooks/media-os'
+import { PS_THUMB, psThumbPath, decodeSteps, openArgv, platformOf, thumbBmpPath, thumbSteps } from '../hooks/media-os'
 
 const cwd = '/proj'
 const home = '/Users/will'
@@ -271,22 +271,25 @@ test('thumbSteps macos video: qlmanage e sips, sem ffmpeg alternativo', async ()
 
 test('thumbSteps windows', async () => {
   const b = bmpOf('/a/x.png')
-  expect(thumbSteps('windows', 'image', '/a/x.png', od, 16, 12, false)).toEqual([['powershell', '-NoProfile', '-NonInteractive', '-Command', PS_THUMB, '/a/x.png', b, '16', '12']])
+  expect(thumbSteps('windows', 'image', '/a/x.png', od, 16, 12, false)).toEqual([['powershell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', '/tmp/o/neon-thumb.ps1', '/a/x.png', b, '16', '12']])
   expect(thumbSteps('windows', 'video', '/a/v.mp4', od, 16, 12, false)).toEqual([])
   expect(thumbSteps('windows', 'video', '/a/v.mp4', od, 16, 12, true)).toEqual([['ffmpeg', '-y', '-loglevel', 'error', '-i', '/a/v.mp4', '-frames:v', '1', '-vf', 'scale=16:12', bmpOf('/a/v.mp4')]])
 })
 
 test('thumbSteps linux', async () => {
-  expect(thumbSteps('linux', 'image', '/a/x.png', od, 16, 12, false)).toEqual([['magick', '/a/x.png', '-resize', '16x12!', bmpOf('/a/x.png')]])
+  expect(thumbSteps('linux', 'image', '/a/x.png', od, 16, 12, false)).toEqual([['magick', '/a/x.png[0]', '-resize', '16x12!', bmpOf('/a/x.png')]])
   expect(thumbSteps('linux', 'video', '/a/v.mp4', od, 16, 12, false)).toEqual([])
   expect(thumbSteps('linux', 'video', '/a/v.mp4', od, 16, 12, true)).toEqual(thumbSteps('windows', 'video', '/a/v.mp4', od, 16, 12, true))
 })
 
-test('PS_THUMB le so de $args e grava BMP 24 bits', async () => {
-  expect(PS_THUMB).toContain('$args[0]')
-  expect(PS_THUMB).toContain('$args[3]')
+test('PS_THUMB e um .ps1 com param, sem $args, e psThumbPath segue o separador', async () => {
+  expect(PS_THUMB.startsWith('param([string]$in, [string]$out, [int]$w, [int]$h)')).toBe(true)
+  expect(PS_THUMB).not.toContain('$args')
   expect(PS_THUMB).toContain('Format24bppRgb')
   expect(PS_THUMB).toContain('ImageFormat]::Bmp')
+  expect(PS_THUMB).toContain('finally')
+  expect(psThumbPath('C:\\t\\m')).toBe('C:\\t\\m\\neon-thumb.ps1')
+  expect(psThumbPath('/tmp/m')).toBe('/tmp/m/neon-thumb.ps1')
 })
 
 test('decodeSteps por sistema', async () => {
