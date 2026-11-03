@@ -3,6 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
 import { MediaRegistry, PixelCache, decodeBmp, drawMediaStrip, findCandidates, isGenerated, mediaKindOf, rasterCells, thumbColumns, toRgba, type MediaItem } from '../hooks/media'
+import { PS_THUMB, decodeSteps, openArgv, platformOf, thumbBmpPath, thumbSteps } from '../hooks/media-os'
 
 const cwd = '/proj'
 const home = '/Users/will'
@@ -250,4 +251,61 @@ test('faixa: estreita demais deixa so as legendas', async ($, on) => {
   expect(await ui.findAll({ type: 'Raster' })).toEqual([])
   expect(await ui.findAll({ type: 'Button' })).toHaveLength(4)
   await ui.unmount()
+})
+
+const od = '/tmp/o'
+const bmpOf = (f: string) => thumbBmpPath(od, f, 0)
+
+test('thumbSteps macos imagem usa sips', async () => {
+  expect(thumbSteps('macos', 'image', '/a/x.png', od, 16, 12, false)).toEqual([['sips', '-s', 'format', 'bmp', '-z', '12', '16', '/a/x.png', '--out', bmpOf('/a/x.png')]])
+})
+
+test('thumbSteps macos video: qlmanage e sips, sem ffmpeg alternativo', async () => {
+  const want = [
+    ['qlmanage', '-t', '-s', '128', '-o', od, '/a/v.mp4'],
+    ['sips', '-s', 'format', 'bmp', '-z', '12', '16', `${od}/v.mp4.png`, '--out', bmpOf('/a/v.mp4')],
+  ]
+  expect(thumbSteps('macos', 'video', '/a/v.mp4', od, 16, 12, false)).toEqual(want)
+  expect(thumbSteps('macos', 'video', '/a/v.mp4', od, 16, 12, true)).toEqual(want)
+})
+
+test('thumbSteps windows', async () => {
+  const b = bmpOf('/a/x.png')
+  expect(thumbSteps('windows', 'image', '/a/x.png', od, 16, 12, false)).toEqual([['powershell', '-NoProfile', '-NonInteractive', '-Command', PS_THUMB, '/a/x.png', b, '16', '12']])
+  expect(thumbSteps('windows', 'video', '/a/v.mp4', od, 16, 12, false)).toEqual([])
+  expect(thumbSteps('windows', 'video', '/a/v.mp4', od, 16, 12, true)).toEqual([['ffmpeg', '-y', '-loglevel', 'error', '-i', '/a/v.mp4', '-frames:v', '1', '-vf', 'scale=16:12', bmpOf('/a/v.mp4')]])
+})
+
+test('thumbSteps linux', async () => {
+  expect(thumbSteps('linux', 'image', '/a/x.png', od, 16, 12, false)).toEqual([['magick', '/a/x.png', '-resize', '16x12!', bmpOf('/a/x.png')]])
+  expect(thumbSteps('linux', 'video', '/a/v.mp4', od, 16, 12, false)).toEqual([])
+  expect(thumbSteps('linux', 'video', '/a/v.mp4', od, 16, 12, true)).toEqual(thumbSteps('windows', 'video', '/a/v.mp4', od, 16, 12, true))
+})
+
+test('PS_THUMB le so de $args e grava BMP 24 bits', async () => {
+  expect(PS_THUMB).toContain('$args[0]')
+  expect(PS_THUMB).toContain('$args[3]')
+  expect(PS_THUMB).toContain('Format24bppRgb')
+  expect(PS_THUMB).toContain('ImageFormat]::Bmp')
+})
+
+test('decodeSteps por sistema', async () => {
+  expect(decodeSteps('macos', '/i', '/o')).toEqual([['base64', '-D', '-i', '/i', '-o', '/o']])
+  expect(decodeSteps('windows', '/i', '/o')).toEqual([['certutil', '-f', '-decode', '/i', '/o']])
+  expect(decodeSteps('linux', '/i', '/o')).toEqual([['sh', '-c', 'base64 -d < "$1" > "$2"', 'sh', '/i', '/o']])
+})
+
+test('openArgv por sistema', async () => {
+  expect(openArgv('macos', '/a b')).toEqual(['open', '/a b'])
+  expect(openArgv('windows', 'C:\\x.png')).toEqual(['explorer.exe', 'C:\\x.png'])
+  expect(openArgv('linux', 'https://x/y.png')).toEqual(['xdg-open', 'https://x/y.png'])
+})
+
+test('platformOf e thumbBmpPath', async () => {
+  expect(platformOf({ OS: 'Windows_NT' }, false)).toBe('windows')
+  expect(platformOf({ HOME: '/Users/x' }, true)).toBe('macos')
+  expect(platformOf({ HOME: '/home/x' }, false)).toBe('linux')
+  expect(thumbBmpPath(od, '/a/x.png', 1)).toBe(thumbBmpPath(od, '/a/x.png', 1))
+  expect(thumbBmpPath(od, '/a/x.png', 1)).not.toBe(thumbBmpPath(od, '/a/x.png', 2))
+  expect(thumbBmpPath(od, '/a/x.png', 1)).toMatch(/^\/tmp\/o\/thumb-[0-9a-f]{8}\.bmp$/)
 })
