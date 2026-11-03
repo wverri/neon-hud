@@ -21,7 +21,7 @@ import { drawPasteBand, extractImageIds, sameIds, tmpBases } from './paste'
 import type { MediaItem } from './media'
 import { MediaRegistry, PixelCache, THUMB_ROWS, decodeBmp, drawMediaStrip, findCandidates, isGenerated } from './media'
 import type { Platform } from './media-os'
-import { PS_THUMB, decodeSteps, openArgv, platformOf, psThumbPath, thumbBmpPath, thumbSteps } from './media-os'
+import { PS_THUMB, decodeSteps, joinPath, openArgv, platformOf, psThumbPath, thumbBmpPath, thumbSteps } from './media-os'
 
 const live = atom({ plugin: 'neon-hud', key: 'live' } as const, {
   phase: 'IDLE',
@@ -358,6 +358,8 @@ const markExpanded = (id: string) => {
 const THUMB_W = 16
 const THUMB_H = 2 * THUMB_ROWS
 const MEDIA_KEEP = 500
+// Caminhos locais examinados por chamada, depois de tirar os repetidos.
+const MAX_LOCAL_EXAMINED = 32
 
 type MediaJob = { item: MediaItem; file: string; mtimeMs: number; decodeFrom?: string; usePng?: boolean }
 
@@ -372,7 +374,7 @@ type MediaState = {
   empty: Set<string>
   pending: Map<string, Promise<MediaItem[]>>
   platform?: Promise<Platform>
-  ffmpeg?: Promise<boolean>
+  ffmpeg?: Promise<string | null>
   readyDirs: Set<string>
   batch: MediaJob[]
   queue: Promise<void>
@@ -402,24 +404,34 @@ const fileName = (p: string) => p.split(/[\\/]/).pop() || p
 const pixelKey = (file: string, mtimeMs: number) => `${file}\0${mtimeMs}\0${THUMB_W}x${THUMB_H}`
 const fromBase64 = (b64: string) => Uint8Array.from(atob(b64), c => c.charCodeAt(0))
 
-const mediaDir = async ($: EngineInterface): Promise<string> => {
-  const tmp = (await $.env.get('TMPDIR').catch(() => undefined)) ?? (await $.env.get('TEMP').catch(() => undefined)) ?? '/tmp'
-  return `${tmp.replace(/[\\/]+$/, '')}/neon-hud-media-${await $.session.id()}`
+const mediaDir = async ($: EngineInterface, m: MediaState): Promise<string> => {
+  const windows = (await mediaPlatform($, m)) === 'windows'
+  // Variavel vazia conta como ausente: || em vez de ??.
+  const tmpdir = (await $.env.get('TMPDIR').catch(() => undefined)) || undefined
+  const tmp = (windows ? ((await $.env.get('TEMP').catch(() => undefined)) || (await $.env.get('TMP').catch(() => undefined)) || tmpdir) : tmpdir) || '/tmp'
+  const base = tmp.replace(/[\\/]+$/, '')
+  const name = `neon-hud-media-${await $.session.id()}`
+  return windows ? `${base.replace(/\//g, '\\')}\\${name}` : `${base}/${name}`
 }
 
 const mediaPlatform = ($: EngineInterface, m: MediaState): Promise<Platform> =>
   (m.platform ??= (async () => platformOf({ OS: (await $.env.get('OS').catch(() => undefined)) ?? undefined }, (await $.fs.stat('/usr/bin/sips').catch(() => null))?.kind === 'file'))())
 
-const hasFfmpeg = ($: EngineInterface, m: MediaState, platform: Platform): Promise<boolean> =>
+// Caminho absoluto do ffmpeg: o processo filho pode nao herdar o PATH do shell do usuario.
+const ffmpegPath = ($: EngineInterface, m: MediaState, platform: Platform): Promise<string | null> =>
   (m.ffmpeg ??= (async () => {
-    for (const path of ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg']) if ((await $.fs.stat(path).catch(() => null))?.kind === 'file') return true
+    for (const path of ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg']) if ((await $.fs.stat(path).catch(() => null))?.kind === 'file') return path
     const found = await $.process.run(platform === 'windows' ? ['where.exe', 'ffmpeg'] : ['which', 'ffmpeg'], { timeoutMs: 3000 }).catch(() => null)
-    return found?.exitCode === 0
+    if (found?.exitCode !== 0) return null
+    return found.stdout.split(/\r?\n/).map(line => line.trim()).find(line => line !== '') ?? null
   })())
+
+// PowerShell carrega o .NET e o qlmanage sobe o Quick Look: os dois passam de 3 s a frio.
+const SLOW_STEPS = new Set(['powershell', 'qlmanage'])
 
 const runSteps = async ($: EngineInterface, steps: string[][]): Promise<boolean> => {
   if (steps.length === 0) return false
-  for (const argv of steps) if ((await $.process.run(argv, { timeoutMs: 3000 }).catch(() => null))?.exitCode !== 0) return false
+  for (const argv of steps) if ((await $.process.run(argv, { timeoutMs: SLOW_STEPS.has(argv[0] ?? '') ? 10000 : 3000 }).catch(() => null))?.exitCode !== 0) return false
   return true
 }
 
@@ -436,15 +448,15 @@ const convertMedia = async ($: EngineInterface, m: MediaState, job: MediaJob): P
       item.state = 'ready'
       return
     }
-    const dir = await mediaDir($)
+    const dir = await mediaDir($, m)
     // sips e qlmanage nao criam a pasta de saida; o fs.write cria. No Windows o arquivo gravado e o proprio script.
     if (!m.readyDirs.has(dir)) {
-      await (platform === 'windows' ? $.fs.write(psThumbPath(dir), PS_THUMB) : $.fs.write(`${dir}/.neon-hud`, ''))
+      await (platform === 'windows' ? $.fs.write(psThumbPath(dir), PS_THUMB) : $.fs.write(joinPath(dir, '.neon-hud'), ''))
       m.readyDirs.add(dir)
     }
-    const ffmpeg = item.media === 'video' ? await hasFfmpeg($, m, platform) : false
+    const ffmpeg = item.media === 'video' ? await ffmpegPath($, m, platform) : null
     let ok = await runSteps($, thumbSteps(platform, item.media, file, dir, THUMB_W, THUMB_H, ffmpeg, mtimeMs))
-    if (!ok && platform === 'macos' && item.media === 'video' && ffmpeg) ok = await runSteps($, thumbSteps('linux', 'video', file, dir, THUMB_W, THUMB_H, true, mtimeMs))
+    if (!ok && platform === 'macos' && item.media === 'video' && ffmpeg !== null) ok = await runSteps($, thumbSteps('linux', 'video', file, dir, THUMB_W, THUMB_H, ffmpeg, mtimeMs))
     const bmp = ok ? await $.fs.read(thumbBmpPath(dir, file, mtimeMs), { as: 'bytes' }).catch(() => null) : null
     const pixels = bmp ? decodeBmp(fromBase64(bmp.base64)) : null
     if (!pixels) {
@@ -486,6 +498,7 @@ const examineMedia = async ($: EngineInterface, m: MediaState, toolUseId: string
   const w = m.windows.get(toolUseId)
   const window = w ? { start: w.start, end: w.end ?? (await $.clock.now()) } : undefined
   const items: MediaItem[] = []
+  let locals = 0
   for (const [i, c] of candidates.entries()) {
     if (c.kind === 'remote') {
       const n = m.registry.claimRemote(c.url)
@@ -497,9 +510,9 @@ const examineMedia = async ($: EngineInterface, m: MediaState, toolUseId: string
     if (c.kind === 'embedded') {
       const n = m.registry.claim(`embedded:${toolUseId}:${i}`, 0)
       if (n === null) continue
-      const dir = await mediaDir($)
-      const b64 = `${dir}/emb-${n}.b64`
-      const file = `${dir}/emb-${n}.${c.ext}`
+      const dir = await mediaDir($, m)
+      const b64 = joinPath(dir, `emb-${n}.b64`)
+      const file = joinPath(dir, `emb-${n}.${c.ext}`)
       const item: MediaItem = { n, name: fileName(file), media: 'image', state: 'loading', path: file }
       m.registry.remember(n, { path: file, name: item.name })
       items.push(item)
@@ -507,6 +520,8 @@ const examineMedia = async ($: EngineInterface, m: MediaState, toolUseId: string
       else item.state = 'nothumb'
       continue
     }
+    // Um ls com centenas de imagens nao pode virar centenas de stat dentro do desenho.
+    if (++locals > MAX_LOCAL_EXAMINED) continue
     const stat = await $.fs.stat(c.path).catch(() => null)
     const name = fileName(c.path)
     if (stat?.kind !== 'file') {
@@ -617,8 +632,15 @@ export const register: Register = (on, options: PluginOptions) => {
       })
       // Com o prismantis ativo o latex nao e usado aqui; o catch garante que nada disso aborte o session.start.
       if (!(await prismantisActive($, prismantis))) void latexEngine($, latex).catch(() => undefined)
+    }
+    // O open vale tambem com render desligado, desde que a faixa esteja ligada.
+    if (rendering || mediaOn) {
       await $.command
-        .register({ name: 'neon-hud', description: 'Copia a ultima resposta ou o ultimo bloco de codigo', argumentHint: '[copy [code]]' })
+        .register(
+          rendering
+            ? { name: 'neon-hud', description: 'Copia a ultima resposta ou o ultimo bloco de codigo, ou abre uma midia', argumentHint: '[copy [code] | open [N]]' }
+            : { name: 'neon-hud', description: 'Abre uma midia gerada nesta sessao', argumentHint: 'open [N]' },
+        )
         .catch(() => undefined)
     }
 
@@ -926,6 +948,29 @@ export const register: Register = (on, options: PluginOptions) => {
     })
   }
 
+  if (rendering || mediaOn) {
+    on('command.run', { command: 'neon-hud' }, async ($, e) => {
+      const [sub, arg] = e.args.trim().split(/\s+/)
+      const usage = rendering ? 'Uso: /neon-hud copy [code] | open [N]' : 'Uso: /neon-hud open [N]'
+      if (sub === 'open') {
+        if (arg === undefined || arg === '') {
+          const recent = media.registry.recent(10)
+          return { text: recent.length ? recent.map(r => `[${r.n}] ${r.name}`).join('\n') : 'Nenhuma mídia nesta sessão.' }
+        }
+        // Number aceitaria 0x1, 1e0 e +1.
+        if (!/^\d+$/.test(arg)) return { text: usage }
+        return { text: await openMedia($, media, Number(arg)).catch(() => 'não consegui abrir') }
+      }
+      if (sub !== 'copy' || !rendering) return { text: usage }
+      const reply = (await $.session.messages()).findLast(m => m.role === 'assistant' && m.text.trim())
+      if (!reply) return { text: 'Nothing to copy yet.' }
+      const code = arg === 'code' ? parseCached(reply.text).flatMap(b => (b.kind === 'list' ? b.items.flatMap(it => it.blocks ?? []) : [b])).findLast(b => b.kind === 'code') : undefined
+      if (arg === 'code' && code?.kind !== 'code') return { text: 'The last reply has no code block.' }
+      const result = await $.ui.copy({ text: code?.kind === 'code' ? code.lines.join('\n') : reply.text })
+      return { text: result.isCopied ? `Copied the last ${code ? 'code block' : 'reply'}.` : `Copy failed: ${result.reason}` }
+    })
+  }
+
   if (!rendering) return
 
   on('ui.render', { component: 'TurnDuration' }, async ($, e, next) => {
@@ -971,26 +1016,6 @@ export const register: Register = (on, options: PluginOptions) => {
       return shell ? renderShellResult(el, style, e.props.output) : next(e)
     })
   }
-
-  on('command.run', { command: 'neon-hud' }, async ($, e) => {
-    const [sub, arg] = e.args.trim().split(/\s+/)
-    if (sub === 'open') {
-      const n = Number(arg)
-      if (arg === undefined || arg === '') {
-        const recent = media.registry.recent(10)
-        return { text: recent.length ? recent.map(r => `[${r.n}] ${r.name}`).join('\n') : 'Nenhuma mídia nesta sessão.' }
-      }
-      if (!Number.isInteger(n)) return { text: 'Uso: /neon-hud copy [code] | open [N]' }
-      return { text: await openMedia($, media, n).catch(() => 'não consegui abrir') }
-    }
-    if (sub !== 'copy') return { text: 'Uso: /neon-hud copy [code] | open [N]' }
-    const reply = (await $.session.messages()).findLast(m => m.role === 'assistant' && m.text.trim())
-    if (!reply) return { text: 'Nothing to copy yet.' }
-    const code = arg === 'code' ? parseCached(reply.text).flatMap(b => (b.kind === 'list' ? b.items.flatMap(it => it.blocks ?? []) : [b])).findLast(b => b.kind === 'code') : undefined
-    if (arg === 'code' && code?.kind !== 'code') return { text: 'The last reply has no code block.' }
-    const result = await $.ui.copy({ text: code?.kind === 'code' ? code.lines.join('\n') : reply.text })
-    return { text: result.isCopied ? `Copied the last ${code ? 'code block' : 'reply'}.` : `Copy failed: ${result.reason}` }
-  })
 
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
     if (await prismantisActive($, prismantis)) return next(e)

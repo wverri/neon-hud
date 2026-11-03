@@ -17,8 +17,13 @@ function fnv1a(s: string): string {
   return h.toString(16).padStart(8, '0')
 }
 
+/** Junta com o separador que a pasta ja usa: \\ no Windows, / no resto. */
+export function joinPath(dir: string, name: string): string {
+  return `${dir}${dir.includes('\\') ? '\\' : '/'}${name}`
+}
+
 export function thumbBmpPath(outDir: string, file: string, mtimeMs: number): string {
-  return `${outDir}/thumb-${fnv1a(file + '\0' + mtimeMs)}.bmp`
+  return joinPath(outDir, `thumb-${fnv1a(file + '\0' + mtimeMs)}.bmp`)
 }
 
 // Conteudo do .ps1 rodado com -File: os caminhos chegam como parametros, nunca
@@ -44,7 +49,7 @@ export const PS_THUMB = [
 
 /** Onde o chamador grava PS_THUMB (com $.fs.write) antes de rodar o passo do Windows. */
 export function psThumbPath(outDir: string): string {
-  return `${outDir}${outDir.includes('\\') ? '\\' : '/'}neon-thumb.ps1`
+  return joinPath(outDir, 'neon-thumb.ps1')
 }
 
 function baseName(p: string): string {
@@ -55,25 +60,26 @@ function baseName(p: string): string {
  * Argv a rodar em sequencia; o ultimo deixa thumbBmpPath(outDir, file, mtimeMs).
  * `mtimeMs` e opcional (0): o chamador deve passar o mesmo valor que usa para
  * localizar o bmp. [] significa sem conversor: fica so a legenda.
- * No macOS, video usa qlmanage + sips e ignora hasFfmpeg: se o qlmanage falhar,
- * o chamador (Task 4) tenta thumbSteps('linux', 'video', ..., true) para o ffmpeg.
+ * `ffmpeg` e o caminho detectado do executavel, ou null sem ffmpeg.
+ * No macOS, video usa qlmanage + sips e ignora ffmpeg: se o qlmanage falhar,
+ * o chamador tenta thumbSteps('linux', 'video', ..., ffmpeg).
  * No Windows, o chamador deve gravar PS_THUMB em psThumbPath(outDir) antes do passo.
  * No Linux e no Windows, video so converte com ffmpeg.
  */
-export function thumbSteps(platform: Platform, media: MediaKind, file: string, outDir: string, width: number, height: number, hasFfmpeg: boolean, mtimeMs = 0): string[][] {
+export function thumbSteps(platform: Platform, media: MediaKind, file: string, outDir: string, width: number, height: number, ffmpeg: string | null, mtimeMs = 0): string[][] {
   const bmp = thumbBmpPath(outDir, file, mtimeMs)
   const w = String(width)
   const h = String(height)
   if (media === 'video') {
     if (platform === 'macos') {
-      const png = `${outDir}/${baseName(file)}.png`
+      const png = joinPath(outDir, `${baseName(file)}.png`)
       return [
         ['qlmanage', '-t', '-s', '128', '-o', outDir, file],
         ['sips', '-s', 'format', 'bmp', '-z', h, w, png, '--out', bmp],
       ]
     }
-    if (!hasFfmpeg) return []
-    return [['ffmpeg', '-y', '-loglevel', 'error', '-i', file, '-frames:v', '1', '-vf', `scale=${w}:${h}`, bmp]]
+    if (ffmpeg === null) return []
+    return [[ffmpeg, '-y', '-loglevel', 'error', '-i', file, '-frames:v', '1', '-vf', `scale=${w}:${h}`, bmp]]
   }
   if (platform === 'macos') return [['sips', '-s', 'format', 'bmp', '-z', h, w, file, '--out', bmp]]
   if (platform === 'windows') return [['powershell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psThumbPath(outDir), file, bmp, w, h]]
@@ -88,6 +94,7 @@ export function decodeSteps(platform: Platform, b64File: string, outFile: string
 
 export function openArgv(platform: Platform, target: string): string[] {
   if (platform === 'macos') return ['open', target]
-  if (platform === 'windows') return ['explorer.exe', target]
+  // O explorer.exe nao entende C:/a/b: caminho local vai com barras invertidas.
+  if (platform === 'windows') return ['explorer.exe', /^https?:\/\//i.test(target) ? target : target.replace(/\//g, '\\')]
   return ['xdg-open', target]
 }

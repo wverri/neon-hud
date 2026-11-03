@@ -323,10 +323,11 @@ test('faixa: estreita demais deixa so as legendas', async ($, on) => {
 })
 
 const od = '/tmp/o'
+const FF = '/opt/homebrew/bin/ffmpeg'
 const bmpOf = (f: string) => thumbBmpPath(od, f, 0)
 
 test('thumbSteps macos imagem usa sips', async () => {
-  expect(thumbSteps('macos', 'image', '/a/x.png', od, 16, 12, false)).toEqual([['sips', '-s', 'format', 'bmp', '-z', '12', '16', '/a/x.png', '--out', bmpOf('/a/x.png')]])
+  expect(thumbSteps('macos', 'image', '/a/x.png', od, 16, 12, null)).toEqual([['sips', '-s', 'format', 'bmp', '-z', '12', '16', '/a/x.png', '--out', bmpOf('/a/x.png')]])
 })
 
 test('thumbSteps macos video: qlmanage e sips, sem ffmpeg alternativo', async () => {
@@ -334,21 +335,21 @@ test('thumbSteps macos video: qlmanage e sips, sem ffmpeg alternativo', async ()
     ['qlmanage', '-t', '-s', '128', '-o', od, '/a/v.mp4'],
     ['sips', '-s', 'format', 'bmp', '-z', '12', '16', `${od}/v.mp4.png`, '--out', bmpOf('/a/v.mp4')],
   ]
-  expect(thumbSteps('macos', 'video', '/a/v.mp4', od, 16, 12, false)).toEqual(want)
-  expect(thumbSteps('macos', 'video', '/a/v.mp4', od, 16, 12, true)).toEqual(want)
+  expect(thumbSteps('macos', 'video', '/a/v.mp4', od, 16, 12, null)).toEqual(want)
+  expect(thumbSteps('macos', 'video', '/a/v.mp4', od, 16, 12, FF)).toEqual(want)
 })
 
 test('thumbSteps windows', async () => {
   const b = bmpOf('/a/x.png')
-  expect(thumbSteps('windows', 'image', '/a/x.png', od, 16, 12, false)).toEqual([['powershell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', '/tmp/o/neon-thumb.ps1', '/a/x.png', b, '16', '12']])
-  expect(thumbSteps('windows', 'video', '/a/v.mp4', od, 16, 12, false)).toEqual([])
-  expect(thumbSteps('windows', 'video', '/a/v.mp4', od, 16, 12, true)).toEqual([['ffmpeg', '-y', '-loglevel', 'error', '-i', '/a/v.mp4', '-frames:v', '1', '-vf', 'scale=16:12', bmpOf('/a/v.mp4')]])
+  expect(thumbSteps('windows', 'image', '/a/x.png', od, 16, 12, null)).toEqual([['powershell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', '/tmp/o/neon-thumb.ps1', '/a/x.png', b, '16', '12']])
+  expect(thumbSteps('windows', 'video', '/a/v.mp4', od, 16, 12, null)).toEqual([])
+  expect(thumbSteps('windows', 'video', '/a/v.mp4', od, 16, 12, FF)).toEqual([[FF, '-y', '-loglevel', 'error', '-i', '/a/v.mp4', '-frames:v', '1', '-vf', 'scale=16:12', bmpOf('/a/v.mp4')]])
 })
 
 test('thumbSteps linux', async () => {
-  expect(thumbSteps('linux', 'image', '/a/x.png', od, 16, 12, false)).toEqual([['magick', '/a/x.png[0]', '-resize', '16x12!', bmpOf('/a/x.png')]])
-  expect(thumbSteps('linux', 'video', '/a/v.mp4', od, 16, 12, false)).toEqual([])
-  expect(thumbSteps('linux', 'video', '/a/v.mp4', od, 16, 12, true)).toEqual(thumbSteps('windows', 'video', '/a/v.mp4', od, 16, 12, true))
+  expect(thumbSteps('linux', 'image', '/a/x.png', od, 16, 12, null)).toEqual([['magick', '/a/x.png[0]', '-resize', '16x12!', bmpOf('/a/x.png')]])
+  expect(thumbSteps('linux', 'video', '/a/v.mp4', od, 16, 12, null)).toEqual([])
+  expect(thumbSteps('linux', 'video', '/a/v.mp4', od, 16, 12, FF)).toEqual(thumbSteps('windows', 'video', '/a/v.mp4', od, 16, 12, FF))
 })
 
 test('PS_THUMB e um .ps1 com param, sem $args, e psThumbPath segue o separador', async () => {
@@ -409,16 +410,18 @@ const thumbBmp = (): string => {
   return btoa(String.fromCharCode(...b))
 }
 
-type World = { runs: string[][]; writes: { path: string; text: string }[] }
+type World = { runs: string[][]; timeouts: (number | undefined)[]; stats: string[]; writes: { path: string; text: string }[] }
 
 // files: caminho -> mtime; o resto nega com ENOENT. run decide a resposta de cada process.run.
 const world = (on: On, files: Record<string, number> = {}, env: Record<string, string> = {}, run?: (argv: readonly string[]) => unknown): World => {
-  const w: World = { runs: [], writes: [] }
+  const w: World = { runs: [], timeouts: [], stats: [], writes: [] }
   on('session.id', () => ({ value: 'sid' }))
   mock.env(on, { TMPDIR: '/tmp', HOME: '/Users/will', TERM_PROGRAM: 'Apple_Terminal', ...env })
   on('fs.stat', (_, e) => {
+    w.stats.push(e.path)
     if (e.path === '/usr/bin/sips') return { value: { kind: 'file' as const, size: 1, mtimeMs: 0, isLink: false } }
-    const m = files[e.path]
+    // O harness resolve caminho Windows contra o cwd do host: a chave vale tambem como sufixo.
+    const m = files[e.path] ?? Object.entries(files).find(([k]) => !k.startsWith('/') && e.path.endsWith(`/${k}`))?.[1]
     return m === undefined ? { deny: 'ENOENT' } : { value: { kind: 'file' as const, size: 10, mtimeMs: m, isLink: false } }
   })
   on('fs.write', (_, e) => {
@@ -428,6 +431,7 @@ const world = (on: On, files: Record<string, number> = {}, env: Record<string, s
   on('fs.read', (_, e) => (e.path.endsWith('.bmp') && w.runs.some(a => a.includes(e.path)) ? { value: { base64: thumbBmp() } } : { deny: 'ENOENT' }) as never)
   on('process.run', (_, e) => {
     w.runs.push([...e.argv])
+    w.timeouts.push(e.init?.timeoutMs)
     return (run?.(e.argv) ?? runResult(0)) as never
   })
   return w
@@ -681,4 +685,129 @@ test('open N: falha do comando mostra o motivo', async ($, on) => {
 test('uso inclui open', async ($, on) => {
   on('session.id', () => ({ value: 'sid' }))
   expect((await $.command.run(cmd('x'))).text).toBe('Uso: /neon-hud copy [code] | open [N]')
+})
+
+// --- Revisao final ---
+
+test('Windows: TEMP, separador \\ e explorer.exe com caminho de barras invertidas', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  engineText(on)
+  const temp = 'C:\\Users\\me\\AppData\\Local\\Temp'
+  const dir = `${temp}\\neon-hud-media-sid`
+  const w = world(on, { 'C:/a/1.gif': 1 }, { OS: 'Windows_NT', TEMP: temp, TMPDIR: '' })
+  const r1 = await $.ui.mount(use('SendUserFile', { files: ['C:/a/1.gif'] }, 'w-1'))
+  const u1 = await $.ui.mount(res('SendUserFile', 'ok', 'w-1'))
+  const r2 = await $.ui.mount(use('mcp__x__shot', {}, 'w-2'))
+  const u2 = await $.ui.mount(res('mcp__x__shot', [{ type: 'image', data: 'AAAA', mimeType: 'image/jpeg' }], 'w-2'))
+  await clock.settle()
+  // fs.write chega resolvido contra o cwd do host; o argv dos processos chega como o mod montou.
+  expect(w.writes.some(x => x.path.endsWith(`/${dir}\\emb-2.b64`) && x.text === 'AAAA')).toBe(true)
+  expect(w.writes.some(x => x.path.endsWith(`/${dir}\\neon-thumb.ps1`))).toBe(true)
+  const ps = w.runs.find(a => a[0] === 'powershell' && a.includes('C:/a/1.gif'))
+  expect(ps?.[6]).toBe(`${dir}\\neon-thumb.ps1`)
+  expect(ps?.[8]).toMatch(/^C:\\Users\\me\\AppData\\Local\\Temp\\neon-hud-media-sid\\thumb-[0-9a-f]{8}\.bmp$/)
+  expect(w.runs).toContainEqual(['certutil', '-f', '-decode', `${dir}\\emb-2.b64`, `${dir}\\emb-2.jpg`])
+  expect(w.runs.flat().some(a => a.includes('/neon-hud-media'))).toBe(false)
+  expect((await $.command.run(cmd('open 1'))).text).toBe('Abrindo 1.gif')
+  expect(w.runs).toContainEqual(['explorer.exe', 'C:\\a\\1.gif'])
+  expect((await $.command.run(cmd('open 2'))).text).toBe('Abrindo emb-2.jpg')
+  expect(w.runs).toContainEqual(['explorer.exe', `${dir}\\emb-2.jpg`])
+  for (const ui of [u1, r1, u2, r2]) await ui.unmount()
+})
+
+test('mediaDir trata TMPDIR vazio como ausente', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  engineText(on)
+  const w = world(on, {}, { TMPDIR: '' })
+  const row = await $.ui.mount(use('mcp__x__shot', {}, 'e-1'))
+  const ui = await $.ui.mount(res('mcp__x__shot', [{ type: 'image', data: 'AAAA', mimeType: 'image/jpeg' }], 'e-1'))
+  await clock.settle()
+  expect(w.writes).toContainEqual({ path: '/tmp/neon-hud-media-sid/emb-1.b64', text: 'AAAA' })
+  await ui.unmount()
+  await row.unmount()
+})
+
+test('timeout: PowerShell e qlmanage 10 s, o resto 3 s', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  engineText(on)
+  const mac = world(on, { '/a/v.mp4': 1, '/a/i.gif': 1 })
+  const row = await $.ui.mount(use('SendUserFile', { files: ['/a/v.mp4', '/a/i.gif'] }, 'to-1'))
+  const ui = await $.ui.mount(res('SendUserFile', 'ok', 'to-1'))
+  await clock.settle()
+  const at = (name: string) => mac.timeouts[mac.runs.findIndex(a => a[0] === name)]
+  expect(at('qlmanage')).toBe(10000)
+  expect(at('sips')).toBe(3000)
+  expect(mac.timeouts.every(t => t !== undefined)).toBe(true)
+  await ui.unmount()
+  await row.unmount()
+})
+
+test('timeout: PowerShell no Windows tem 10 s', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  engineText(on)
+  const w = world(on, { 'C:\\a\\i.gif': 1 }, { OS: 'Windows_NT', TEMP: 'C:\\T' })
+  const row = await $.ui.mount(use('SendUserFile', { files: ['C:\\a\\i.gif'] }, 'tw-1'))
+  const ui = await $.ui.mount(res('SendUserFile', 'ok', 'tw-1'))
+  await clock.settle()
+  expect(w.timeouts[w.runs.findIndex(a => a[0] === 'powershell')]).toBe(10000)
+  await ui.unmount()
+  await row.unmount()
+})
+
+test('saida com 200 caminhos examina no maximo 32', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  engineText(on)
+  const w = world(on)
+  const paths = Array.from({ length: 200 }, (_, i) => `/a/p${i}.png`)
+  const row = await $.ui.mount(use('Bash', { command: 'ls' }, 'cap-1'))
+  const ui = await $.ui.mount(res('Bash', { stdout: paths.join('\n'), stderr: '' }, 'cap-1'))
+  await clock.settle()
+  expect(w.stats.filter(p => p.startsWith('/a/p')).length).toBeLessThanOrEqual(32)
+  expect(w.stats).toContain('/a/p31.png')
+  expect(w.stats).not.toContain('/a/p32.png')
+  await ui.unmount()
+  await row.unmount()
+})
+
+test('ffmpeg roda pelo caminho absoluto detectado', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  engineText(on)
+  const w = world(on, { '/a/v.mp4': 1, [FF]: 0 }, {}, argv => (argv[0] === 'qlmanage' ? runResult(1) : undefined))
+  const row = await $.ui.mount(use('SendUserFile', { files: ['/a/v.mp4'] }, 'ff-1'))
+  const ui = await $.ui.mount(res('SendUserFile', 'ok', 'ff-1'))
+  await clock.settle()
+  expect(w.runs.some(a => a[0] === FF && a.includes('/a/v.mp4'))).toBe(true)
+  expect(w.runs.some(a => a[0] === 'ffmpeg')).toBe(false)
+  await ui.unmount()
+  await row.unmount()
+})
+
+test('ffmpeg achado pelo where.exe usa a primeira linha da saida', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  engineText(on)
+  const exe = 'C:\\ffmpeg\\bin\\ffmpeg.exe'
+  const w = world(on, { 'C:\\a\\v.mp4': 1 }, { OS: 'Windows_NT', TEMP: 'C:\\T' }, argv =>
+    argv[0] === 'where.exe' ? { value: { exitCode: 0, stdout: `${exe}\r\nC:\\outro\\ffmpeg.exe\r\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } } : undefined,
+  )
+  const row = await $.ui.mount(use('SendUserFile', { files: ['C:\\a\\v.mp4'] }, 'fw-1'))
+  const ui = await $.ui.mount(res('SendUserFile', 'ok', 'fw-1'))
+  await clock.settle()
+  expect(w.runs.some(a => a[0] === exe && a.includes('C:\\a\\v.mp4'))).toBe(true)
+  await ui.unmount()
+  await row.unmount()
+})
+
+test('open N so aceita digitos', async ($, on) => {
+  const { done } = await withStrip($, on)
+  for (const arg of ['0x1', '1e0', '1.0', '+1']) expect((await $.command.run(cmd(`open ${arg}`))).text).toBe('Uso: /neon-hud copy [code] | open [N]')
+  expect((await $.command.run(cmd('open 1'))).text).toBe('Abrindo 1.png')
+  await done()
+})
+
+test('open funciona com render desligado e a faixa ligada', { options: { render: false } }, async ($, on) => {
+  const { w, done } = await withStrip($, on)
+  expect((await $.command.run(cmd('open 2'))).text).toBe('Abrindo 2.png')
+  expect(w.runs).toContainEqual(['open', '/a/2.png'])
+  expect((await $.command.run(cmd('open'))).text).toBe('[2] 2.png\n[1] 1.png')
+  await done()
 })
