@@ -1,3 +1,7 @@
+import type { ElementTable, RenderElement } from 'claude-code'
+
+import { C } from './hud'
+
 export type MediaKind = 'image' | 'video'
 
 export type Candidate =
@@ -122,4 +126,204 @@ export function findCandidates(tool: string, input: unknown, output: unknown, cw
   }
   for (const e of embedded) if (e.kind === 'embedded') add(e, `embedded:${e.ext}:${e.base64}`)
   return result
+}
+
+type Entry = { path?: string; url?: string; name: string }
+
+export class MediaRegistry {
+  private next = 1
+  private readonly seen = new Map<string, number>()
+  private readonly entries = new Map<number, Entry>()
+
+  // Numera de novo quando o arquivo foi reescrito (mtime muda); igual, ja foi mostrado.
+  claim(key: string, mtimeMs: number): number | null {
+    if (this.seen.get(key) === mtimeMs) return null
+    this.seen.set(key, mtimeMs)
+    return this.next++
+  }
+
+  claimRemote(url: string): number | null {
+    const key = `remote:${url}`
+    if (this.seen.has(key)) return null
+    this.seen.set(key, 0)
+    return this.next++
+  }
+
+  get(n: number): Entry | undefined {
+    return this.entries.get(n)
+  }
+
+  remember(n: number, entry: Entry): void {
+    this.entries.set(n, entry)
+  }
+
+  recent(k: number): { n: number; name: string }[] {
+    return [...this.entries]
+      .sort((a, b) => b[0] - a[0])
+      .slice(0, k)
+      .map(([n, e]) => ({ n, name: e.name }))
+  }
+}
+
+export type Pixels = { width: number; height: number; rgb: Uint8Array }
+
+const MAX_BMP_SIDE = 16384
+
+export function decodeBmp(bytes: Uint8Array): Pixels | null {
+  if (bytes.length < 54 || bytes[0] !== 0x42 || bytes[1] !== 0x4d) return null
+  const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  const offset = v.getUint32(10, true)
+  const width = v.getInt32(18, true)
+  const rawHeight = v.getInt32(22, true)
+  const bpp = v.getUint16(28, true)
+  const compression = v.getUint32(30, true)
+  const height = Math.abs(rawHeight)
+  if (compression !== 0 || (bpp !== 24 && bpp !== 32)) return null
+  if (width <= 0 || height === 0 || width > MAX_BMP_SIDE || height > MAX_BMP_SIDE) return null
+  const stride = Math.floor((bpp * width + 31) / 32) * 4
+  if (offset + stride * height > bytes.length) return null
+  const step = bpp / 8
+  const rgb = new Uint8Array(width * height * 3)
+  for (let y = 0; y < height; y++) {
+    const src = offset + (rawHeight > 0 ? height - 1 - y : y) * stride
+    for (let x = 0; x < width; x++) {
+      const i = src + x * step
+      rgb.set([bytes[i + 2] ?? 0, bytes[i + 1] ?? 0, bytes[i] ?? 0], (y * width + x) * 3)
+    }
+  }
+  return { width, height, rgb }
+}
+
+const CACHE_LIMIT = 64
+
+export class PixelCache {
+  private readonly map = new Map<string, Pixels>()
+
+  get size(): number {
+    return this.map.size
+  }
+
+  get(key: string): Pixels | undefined {
+    const p = this.map.get(key)
+    if (p !== undefined) {
+      this.map.delete(key)
+      this.map.set(key, p)
+    }
+    return p
+  }
+
+  set(key: string, p: Pixels): void {
+    this.map.delete(key)
+    this.map.set(key, p)
+    if (this.map.size > CACHE_LIMIT) this.map.delete(this.map.keys().next().value as string)
+  }
+}
+
+export const THUMB_ROWS = 6
+export const MAX_ITEMS = 8
+
+export const thumbColumns = (columns: number, count: number): number | null => {
+  const width = Math.min(16, Math.floor((columns - 2 * (count - 1)) / count))
+  return width < 6 ? null : width
+}
+
+const toBase64 = (bytes: Uint8Array): string => {
+  let bin = ''
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  return btoa(bin)
+}
+
+export function rasterCells(p: Pixels, columns: number, rows: number): string {
+  const out = new DataView(new ArrayBuffer(columns * rows * 12))
+  const color = (x: number, y: number): number => {
+    const sx = Math.min(p.width - 1, Math.floor((x * p.width) / columns))
+    const sy = Math.min(p.height - 1, Math.floor((y * p.height) / (rows * 2)))
+    const i = (sy * p.width + sx) * 3
+    return ((p.rgb[i] ?? 0) << 16) | ((p.rgb[i + 1] ?? 0) << 8) | (p.rgb[i + 2] ?? 0)
+  }
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < columns; c++) {
+      const at = (r * columns + c) * 12
+      out.setUint32(at, 0x2580, true)
+      out.setUint32(at + 4, color(c, 2 * r), true)
+      out.setUint32(at + 8, color(c, 2 * r + 1), true)
+    }
+  }
+  return toBase64(new Uint8Array(out.buffer))
+}
+
+export function toRgba(p: Pixels): string {
+  const out = new Uint8Array(p.width * p.height * 4)
+  for (let i = 0; i < p.width * p.height; i++) {
+    out[i * 4] = p.rgb[i * 3] ?? 0
+    out[i * 4 + 1] = p.rgb[i * 3 + 1] ?? 0
+    out[i * 4 + 2] = p.rgb[i * 3 + 2] ?? 0
+    out[i * 4 + 3] = 255
+  }
+  return toBase64(out)
+}
+
+export type MediaItem = {
+  n: number
+  name: string
+  media: MediaKind
+  state: 'ready' | 'loading' | 'missing' | 'nothumb'
+  path?: string
+  pngFile?: string
+  pixels?: Pixels
+  url?: string
+}
+
+const labelOf = (item: MediaItem): string => `${item.media === 'video' ? '▶ ' : ''}[${item.n}] ${item.name}`
+
+export function drawMediaStrip({ Box, Text, Button, Link, Raster, Image }: ElementTable<'terminal'>, items: MediaItem[], columns: number, showImages: boolean, onOpen: (n: number) => void): RenderElement {
+  const shown = items.slice(0, MAX_ITEMS)
+  const extra = items.length - shown.length
+  const locals = shown.filter(i => i.url === undefined)
+  const remotes = shown.filter(i => i.url !== undefined)
+  const width = locals.length === 0 ? null : thumbColumns(columns, locals.length)
+  const thumb = (item: MediaItem) => {
+    if (width === null || item.state !== 'ready') return null
+    if (showImages) {
+      if (item.pngFile !== undefined) return <Image key={`media-${item.n}`} source={{ file: item.pngFile, format: 'png' }} columns={width} rows={THUMB_ROWS} alt={labelOf(item)} />
+      if (item.pixels !== undefined) return <Image key={`media-${item.n}`} source={{ rgba: toRgba(item.pixels), width: item.pixels.width, height: item.pixels.height }} columns={width} rows={THUMB_ROWS} alt={labelOf(item)} />
+      return null
+    }
+    return item.pixels === undefined ? null : <Raster key={`media-${item.n}`} columns={width} rows={THUMB_ROWS} cells={rasterCells(item.pixels, width, THUMB_ROWS)} />
+  }
+  return (
+    <Box flexDirection="column">
+      <Box flexDirection="row" justifyContent="space-between" width={columns}>
+        <Text color={C.cyan} bold>
+          MEDIA
+        </Text>
+        <Text color={C.dim}>{items.length === 1 ? '1 arquivo' : `${items.length} arquivos`}</Text>
+      </Box>
+      {/* Sem miniatura as legendas empilham: lado a lado quebrariam em pedacos. */}
+      <Box flexDirection={width === null ? 'column' : 'row'} columnGap={2}>
+        {locals.map(item => (
+          <Box flexDirection="column" width={width ?? undefined}>
+            {thumb(item)}
+            {item.state === 'missing' ? (
+              <Text color={C.dim} wrap="truncate-end">{`[${item.n}] ${item.name} · arquivo removido`}</Text>
+            ) : item.state === 'loading' ? (
+              <>
+                <Text color={C.text} wrap="truncate-end">{labelOf(item)}</Text>
+                <Text color={C.dim}>carregando…</Text>
+              </>
+            ) : (
+              <Button key={`open-${item.n}`} plain label={labelOf(item)} onPress={() => onOpen(item.n)} />
+            )}
+          </Box>
+        ))}
+      </Box>
+      {remotes.map(item => (
+        <Box flexDirection="row">
+          <Text color={C.dim}>{'↗ '}</Text>
+          <Link href={item.url as string} label={labelOf(item)} />
+        </Box>
+      ))}
+      {extra > 0 ? <Text color={C.dim}>{`+${extra}`}</Text> : null}
+    </Box>
+  )
 }
