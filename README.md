@@ -87,10 +87,24 @@ Todas as opções ficam em `~/.claude/settings.json` (ou em `/config`); depois, 
 | `highlightNumbers` | `true`, `false` | `true` | Colore versões, IDs, contagens e durações. |
 | `highlightPaths` | `true`, `false` | `true` | Colore caminhos como `~/src/app.ts`. |
 | `pastePreview` | `true`, `false` | `true` | Miniatura de cada imagem colada acima do prompt, antes do envio. |
+| `mediaStrip` | `true`, `false` | `true` | Mostra miniaturas clicáveis da mídia gerada ou entregue (prints, imagens, GIFs, vídeos) sob a ferramenta que a gerou. Funciona no Terminal do macOS e no Windows com blocos coloridos. |
 
 ### Junto com o prismantis
 
 Se o prismantis estiver instalado e ligado, ele desenha as respostas e o neon-hud mostra só o painel. Com o prismantis instalado mas desligado, o neon-hud desenha as respostas normalmente. A verificação se repete quando o mod recarrega. `render: false` desliga o redesenho sem afetar o painel.
+
+## Mídia gerada
+
+Imagens, GIFs e vídeos que uma ferramenta gerou ou entregou aparecem como miniaturas sob a linha da ferramenta, com uma legenda `[N] nome.ext`.
+
+| Item | Detalhe |
+| --- | --- |
+| Fontes | `SendUserFile`, prints do Chrome e de MCP, arquivos que `Bash`, `Write` ou scripts criaram durante a chamada. URLs remotas viram só links. Imagens que o agente apenas leu com `Read` nunca aparecem |
+| Terminal | Blocos coloridos no Terminal do macOS, no Windows Terminal e no PowerShell; pixels reais no Ghostty e no kitty, fora do tmux |
+| Clique | A legenda abre o arquivo no app padrão do sistema. O clique exige o layout fullscreen (`"tui": "fullscreen"`); sem ele, use `/neon-hud open N` |
+| Dependências opcionais | `ffmpeg` para miniaturas de vídeo no Windows e no Linux; `magick` para imagens no Linux. O macOS usa `sips` e `qlmanage`, que já vêm no sistema |
+
+`mediaStrip: false` desliga a faixa.
 
 ## Prévia de imagem colada
 
@@ -108,6 +122,7 @@ Quando você cola uma imagem no prompt, o rascunho mostra só `[Image #1]`. O ne
 | `/hud` | Abre o painel (ou reabre, depois de fechado no `×`). |
 | `/neon-hud copy` | Copia a última resposta do Claude, como foi escrita. |
 | `/neon-hud copy code` | Copia o último bloco de código da última resposta. |
+| `/neon-hud open [N]` | Abre a mídia `N` (ou a última) no app padrão do sistema. |
 
 `/neon-hud` só existe com `render` ligado.
 

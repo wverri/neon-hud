@@ -87,10 +87,24 @@ All options live in `~/.claude/settings.json` (or in `/config`). Run `/reload` a
 | `highlightNumbers` | `true`, `false` | `true` | Colors versions, IDs, counts and durations. |
 | `highlightPaths` | `true`, `false` | `true` | Colors paths such as `~/src/app.ts`. |
 | `pastePreview` | `true`, `false` | `true` | A thumbnail of each pasted image above the prompt, before sending. |
+| `mediaStrip` | `true`, `false` | `true` | Shows clickable thumbnails of generated or delivered media (screenshots, images, GIFs, videos) under the tool that produced it. Works in macOS Terminal and on Windows with colored blocks. |
 
 ### Alongside prismantis
 
 If prismantis is installed and enabled, it draws the replies and neon-hud shows only the pane. If prismantis is installed but disabled, neon-hud draws the replies as usual. neon-hud checks again whenever the mod reloads. `render: false` turns off the redrawing without affecting the pane.
+
+## Generated media
+
+Images, GIFs and videos that a tool generated or delivered show up as thumbnails under the tool row, with a `[N] name.ext` caption.
+
+| Item | Detail |
+| --- | --- |
+| Sources | `SendUserFile`, Chrome and MCP screenshots, files that `Bash`, `Write` or scripts created during the call. Remote URLs become links only. Images the agent merely read with `Read` never appear |
+| Terminal | Colored blocks in macOS Terminal, Windows Terminal and PowerShell; real pixels in Ghostty and kitty, outside tmux |
+| Click | The caption opens the file in the OS default app. Clicking needs the fullscreen layout (`"tui": "fullscreen"`); otherwise use `/neon-hud open N` |
+| Optional dependencies | `ffmpeg` for video thumbnails on Windows and Linux; `magick` for images on Linux. macOS uses the built-in `sips` and `qlmanage` |
+
+`mediaStrip: false` turns the strip off.
 
 ## Pasted image preview
 
@@ -108,6 +122,7 @@ When you paste an image into the prompt, the draft only shows `[Image #1]`. neon
 | `/hud` | Opens the pane, or reopens it after you close it with `×`. |
 | `/neon-hud copy` | Copies Claude's last reply, as written. |
 | `/neon-hud copy code` | Copies the last code block of the last reply. |
+| `/neon-hud open [N]` | Opens media `N` (or the latest) in the OS default app. |
 
 `/neon-hud` only exists while `render` is on.
 
