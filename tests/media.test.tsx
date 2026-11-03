@@ -560,3 +560,55 @@ test('faixa: com toolRows desligado a faixa ainda envolve o desenho do engine', 
   await ui.unmount()
   await row.unmount()
 })
+
+const cmd = (args: string) => ({ command: 'neon-hud', args, origin: { kind: 'composer' as const }, presentation: { isFullscreen: false, columns: 120 } })
+
+// Monta uma faixa com [1] e [2] para o registro da sessao ter o que abrir.
+const withStrip = async ($: Parameters<TestBody>[0], on: On, env: Record<string, string> = {}, run?: (argv: readonly string[]) => unknown) => {
+  const clock = mock.clock(on, { now: NOW })
+  engineText(on)
+  const w = world(on, { '/a/1.png': 1, '/a/2.png': 1 }, env, run)
+  const row = await $.ui.mount(use('SendUserFile', { files: ['/a/1.png', '/a/2.png'] }, 'op-1'))
+  const ui = await $.ui.mount(res('SendUserFile', 'ok', 'op-1'))
+  await clock.settle()
+  return { w, done: async () => { await ui.unmount(); await row.unmount() } }
+}
+
+test('open N: macOS abre pelo open e responde Abrindo', async ($, on) => {
+  const { w, done } = await withStrip($, on)
+  const r = await $.command.run(cmd('open 2'))
+  expect(r.text).toBe('Abrindo 2.png')
+  expect(w.runs).toContainEqual(['open', '/a/2.png'])
+  await done()
+})
+
+test('open N: Windows usa explorer.exe e aceita exit 1', async ($, on) => {
+  const { w, done } = await withStrip($, on, { OS: 'Windows_NT' }, argv => (argv[0] === 'explorer.exe' ? runResult(1) : undefined))
+  const r = await $.command.run(cmd('open 2'))
+  expect(w.runs.some(a => a[0] === 'explorer.exe')).toBe(true)
+  expect(r.text).toBe('Abrindo 2.png')
+  await done()
+})
+
+test('open N: numero inexistente', async ($, on) => {
+  const { done } = await withStrip($, on)
+  expect((await $.command.run(cmd('open 9'))).text).toBe('Mídia 9 não existe nesta sessão.')
+  await done()
+})
+
+test('open sem numero lista as ultimas', async ($, on) => {
+  const { done } = await withStrip($, on)
+  expect((await $.command.run(cmd('open'))).text).toBe('[2] 2.png\n[1] 1.png')
+  await done()
+})
+
+test('open N: falha do comando mostra o motivo', async ($, on) => {
+  const { done } = await withStrip($, on, {}, argv => (argv[0] === 'open' ? runResult(1, 'boom') : undefined))
+  expect((await $.command.run(cmd('open 1'))).text).toBe('não consegui abrir: boom')
+  await done()
+})
+
+test('uso inclui open', async ($, on) => {
+  on('session.id', () => ({ value: 'sid' }))
+  expect((await $.command.run(cmd('x'))).text).toBe('Uso: /neon-hud copy [code] | open [N]')
+})

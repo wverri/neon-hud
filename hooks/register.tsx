@@ -974,7 +974,16 @@ export const register: Register = (on, options: PluginOptions) => {
 
   on('command.run', { command: 'neon-hud' }, async ($, e) => {
     const [sub, arg] = e.args.trim().split(/\s+/)
-    if (sub !== 'copy') return { text: 'Uso: /neon-hud copy [code]' }
+    if (sub === 'open') {
+      const n = Number(arg)
+      if (arg === undefined || arg === '') {
+        const recent = media.registry.recent(10)
+        return { text: recent.length ? recent.map(r => `[${r.n}] ${r.name}`).join('\n') : 'Nenhuma mídia nesta sessão.' }
+      }
+      if (!Number.isInteger(n)) return { text: 'Uso: /neon-hud copy [code] | open [N]' }
+      return { text: await openMedia($, media, n).catch(() => 'não consegui abrir') }
+    }
+    if (sub !== 'copy') return { text: 'Uso: /neon-hud copy [code] | open [N]' }
     const reply = (await $.session.messages()).findLast(m => m.role === 'assistant' && m.text.trim())
     if (!reply) return { text: 'Nothing to copy yet.' }
     const code = arg === 'code' ? parseCached(reply.text).flatMap(b => (b.kind === 'list' ? b.items.flatMap(it => it.blocks ?? []) : [b])).findLast(b => b.kind === 'code') : undefined
