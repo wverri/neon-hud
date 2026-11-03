@@ -95,7 +95,7 @@ If prismantis is installed and enabled, it draws the replies and neon-hud shows 
 
 ## Generated media
 
-Images, GIFs and videos that a tool generated or delivered show up as thumbnails under the tool row, with a `[N] name.ext` caption.
+Images, GIFs and videos that a tool generated or delivered show up as thumbnails under the tool row, with a `[N] name.ext` caption. Each strip shows up to 8 items; the rest appear as `+N`.
 
 | Item | Detail |
 | --- | --- |
@@ -122,7 +122,7 @@ When you paste an image into the prompt, the draft only shows `[Image #1]`. neon
 | `/hud` | Opens the pane, or reopens it after you close it with `×`. |
 | `/neon-hud copy` | Copies Claude's last reply, as written. |
 | `/neon-hud copy code` | Copies the last code block of the last reply. |
-| `/neon-hud open [N]` | Opens media `N` (or the latest) in the OS default app. |
+| `/neon-hud open [N]` | Opens media `N` in the OS default app. Without `N`, lists the last 10 as `[N] name`. |
 
 `/neon-hud` only exists while `render` is on.
 

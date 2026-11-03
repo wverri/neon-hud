@@ -95,7 +95,7 @@ Se o prismantis estiver instalado e ligado, ele desenha as respostas e o neon-hu
 
 ## Mídia gerada
 
-Imagens, GIFs e vídeos que uma ferramenta gerou ou entregou aparecem como miniaturas sob a linha da ferramenta, com uma legenda `[N] nome.ext`.
+Imagens, GIFs e vídeos que uma ferramenta gerou ou entregou aparecem como miniaturas sob a linha da ferramenta, com uma legenda `[N] nome.ext`. Cada faixa mostra até 8 itens; o resto aparece como `+N`.
 
 | Item | Detalhe |
 | --- | --- |
@@ -122,7 +122,7 @@ Quando você cola uma imagem no prompt, o rascunho mostra só `[Image #1]`. O ne
 | `/hud` | Abre o painel (ou reabre, depois de fechado no `×`). |
 | `/neon-hud copy` | Copia a última resposta do Claude, como foi escrita. |
 | `/neon-hud copy code` | Copia o último bloco de código da última resposta. |
-| `/neon-hud open [N]` | Abre a mídia `N` (ou a última) no app padrão do sistema. |
+| `/neon-hud open [N]` | Abre a mídia `N` no app padrão do sistema. Sem `N`, lista as últimas 10 como `[N] nome`. |
 
 `/neon-hud` só existe com `render` ligado.
 

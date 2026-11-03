@@ -338,10 +338,13 @@ export function drawMediaStrip({ Box, Text, Button, Link, Raster, Image }: Eleme
       {/* Sem miniatura as legendas empilham: lado a lado quebrariam em pedacos. */}
       <Box flexDirection={width === null ? 'column' : 'row'} columnGap={2}>
         {locals.map(item => (
-          <Box flexDirection="column" width={width ?? undefined}>
+          <Box key={`media-${item.n}`} flexDirection="column" width={width ?? undefined}>
             {thumb(item)}
             {item.state === 'missing' ? (
-              <Text color={C.dim} wrap="truncate-end">{`[${item.n}] ${item.name} · arquivo removido`}</Text>
+              <Text color={C.text} wrap="truncate-end">
+                {`[${item.n}] ${item.name}`}
+                <Text color={C.dim}>{' · arquivo removido'}</Text>
+              </Text>
             ) : item.state === 'loading' ? (
               <>
                 <Text color={C.text} wrap="truncate-end">{labelOf(item)}</Text>
@@ -354,7 +357,7 @@ export function drawMediaStrip({ Box, Text, Button, Link, Raster, Image }: Eleme
         ))}
       </Box>
       {remotes.map(item => (
-        <Box flexDirection="row">
+        <Box key={`remote-${item.n}`} flexDirection="row">
           <Text color={C.dim}>{'↗ '}</Text>
           <Link href={item.url as string} label={labelOf(item)} />
         </Box>
