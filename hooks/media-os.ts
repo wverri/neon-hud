@@ -18,7 +18,7 @@ function fnv1a(s: string): string {
 }
 
 export function thumbBmpPath(outDir: string, file: string, mtimeMs: number): string {
-  return `${outDir}/thumb-${fnv1a(file + mtimeMs)}.bmp`
+  return `${outDir}/thumb-${fnv1a(file + '\0' + mtimeMs)}.bmp`
 }
 
 // Conteudo do .ps1 rodado com -File: os caminhos chegam como parametros, nunca

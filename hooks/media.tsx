@@ -169,6 +169,14 @@ export type Pixels = { width: number; height: number; rgb: Uint8Array }
 
 const MAX_BMP_SIDE = 16384
 
+// Mascara de canal vira deslocamento e largura; 8 bits e o caso comum, o resto escala para 0..255.
+const channel = (mask: number): { mask: number; shift: number; max: number } | null => {
+  if (mask === 0) return null
+  let shift = 0
+  while (((mask >>> shift) & 1) === 0) shift++
+  return { mask, shift, max: (mask >>> shift) >>> 0 }
+}
+
 export function decodeBmp(bytes: Uint8Array): Pixels | null {
   if (bytes.length < 54 || bytes[0] !== 0x42 || bytes[1] !== 0x4d) return null
   const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
@@ -178,17 +186,30 @@ export function decodeBmp(bytes: Uint8Array): Pixels | null {
   const bpp = v.getUint16(28, true)
   const compression = v.getUint32(30, true)
   const height = Math.abs(rawHeight)
-  if (compression !== 0 || (bpp !== 24 && bpp !== 32)) return null
+  // O sips grava PNG com alfa como 32 bits BI_BITFIELDS (3) com cabecalho V5; 6 e o mesmo com mascara de alfa.
+  const bitfields = bpp === 32 && (compression === 3 || compression === 6)
+  if (!bitfields && (compression !== 0 || (bpp !== 24 && bpp !== 32))) return null
   if (width <= 0 || height === 0 || width > MAX_BMP_SIDE || height > MAX_BMP_SIDE) return null
+  let masks: ReturnType<typeof channel>[] | null = null
+  if (bitfields) {
+    // Mascaras em 54..65: logo apos o BITMAPINFOHEADER ou dentro do cabecalho V4/V5, no mesmo lugar.
+    if (bytes.length < 66) return null
+    masks = [channel(v.getUint32(54, true)), channel(v.getUint32(58, true)), channel(v.getUint32(62, true))]
+  }
   const stride = Math.floor((bpp * width + 31) / 32) * 4
   if (offset + stride * height > bytes.length) return null
   const step = bpp / 8
   const rgb = new Uint8Array(width * height * 3)
+  const pick = (px: number, c: ReturnType<typeof channel>): number => (c === null ? 0 : c.max === 255 ? (px & c.mask) >>> c.shift : Math.round((((px & c.mask) >>> c.shift) * 255) / c.max))
   for (let y = 0; y < height; y++) {
     const src = offset + (rawHeight > 0 ? height - 1 - y : y) * stride
     for (let x = 0; x < width; x++) {
       const i = src + x * step
-      rgb.set([bytes[i + 2] ?? 0, bytes[i + 1] ?? 0, bytes[i] ?? 0], (y * width + x) * 3)
+      const at = (y * width + x) * 3
+      if (masks !== null) {
+        const px = v.getUint32(i, true)
+        rgb.set([pick(px, masks[0] ?? null), pick(px, masks[1] ?? null), pick(px, masks[2] ?? null)], at)
+      } else rgb.set([bytes[i + 2] ?? 0, bytes[i + 1] ?? 0, bytes[i] ?? 0], at)
     }
   }
   return { width, height, rgb }

@@ -158,7 +158,49 @@ test('decodeBmp le 24 bits de baixo para cima', async () => {
 
 test('decodeBmp recusa compressao e lixo', async () => {
   expect(decodeBmp(bmp24(1))).toBe(null)
+  expect(decodeBmp(bmp24(3))).toBe(null)
   expect(decodeBmp(new Uint8Array([1, 2, 3]))).toBe(null)
+})
+
+const fromB64 = (b64: string) => Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+// Saida real do `sips -s format bmp -z 2 2` no macOS 26 para um PNG 2x2 vermelho, verde / azul, branco.
+// RGBA: 32 bits, BI_BITFIELDS (3), cabecalho V5 de 124 bytes, altura -2 (de cima para baixo).
+const SIPS_RGBA_2X2 = 'Qk2aAAAAAAAAAIoAAAB8AAAAAgAAAP7///8BACAAAwAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/AAD/AAD/AAAAAAAA/0JHUnMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD//wD/AP//AAD//////w=='
+// RGB sem alfa: 24 bits, sem compressao, cabecalho de 40 bytes, altura -2.
+const SIPS_RGB_2X2 = 'Qk1GAAAAAAAAADYAAAAoAAAAAgAAAP7///8BABgAAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAD/AP8AAAD/AAD///8AAA=='
+const RGBW = [255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255]
+
+test('decodeBmp le a saida real do sips: V5, bitfields, de cima para baixo', async () => {
+  const bytes = fromB64(SIPS_RGBA_2X2)
+  const v = new DataView(bytes.buffer)
+  expect([v.getUint32(14, true), v.getInt32(22, true), v.getUint16(28, true), v.getUint32(30, true)]).toEqual([124, -2, 32, 3])
+  expect([v.getUint32(54, true), v.getUint32(58, true), v.getUint32(62, true), v.getUint32(66, true)]).toEqual([0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000])
+  const p = decodeBmp(bytes)
+  expect([p?.width, p?.height]).toEqual([2, 2])
+  expect([...(p?.rgb ?? [])]).toEqual(RGBW)
+  expect([...(decodeBmp(fromB64(SIPS_RGB_2X2))?.rgb ?? [])]).toEqual(RGBW)
+})
+
+test('decodeBmp segue as mascaras de BITMAPINFOHEADER + bitfields', async () => {
+  // 1x1, 32 bits, compressao 3, mascaras logo apos o cabecalho de 40 bytes em ordem RGBA nos bytes.
+  for (const compression of [3, 6]) {
+    const b = new Uint8Array(54 + 16 + 4)
+    const v = new DataView(b.buffer)
+    b[0] = 0x42
+    b[1] = 0x4d
+    v.setUint32(10, 70, true)
+    v.setUint32(14, 40, true)
+    v.setInt32(18, 1, true)
+    v.setInt32(22, 1, true)
+    v.setUint16(28, 32, true)
+    v.setUint32(30, compression, true)
+    v.setUint32(54, 0x000000ff, true)
+    v.setUint32(58, 0x0000ff00, true)
+    v.setUint32(62, 0x00ff0000, true)
+    v.setUint32(66, 0xff000000, true)
+    b.set([10, 20, 30, 255], 70)
+    expect([...(decodeBmp(b)?.rgb ?? [])]).toEqual([10, 20, 30])
+  }
 })
 
 test('rasterCells usa meio bloco com a linha 2r em fg e 2r+1 em bg', async () => {
@@ -312,6 +354,8 @@ test('platformOf e thumbBmpPath', async () => {
   expect(thumbBmpPath(od, '/a/x.png', 1)).toBe(thumbBmpPath(od, '/a/x.png', 1))
   expect(thumbBmpPath(od, '/a/x.png', 1)).not.toBe(thumbBmpPath(od, '/a/x.png', 2))
   expect(thumbBmpPath(od, '/a/x.png', 1)).toMatch(/^\/tmp\/o\/thumb-[0-9a-f]{8}\.bmp$/)
+  // Com separador, arquivo e mtime nao se confundem: "/a/x1" + 23 vs "/a/x" + 123.
+  expect(thumbBmpPath(od, '/a/x1', 23)).not.toBe(thumbBmpPath(od, '/a/x', 123))
 })
 
 // --- Task 4: faixa ligada nos hooks ---
