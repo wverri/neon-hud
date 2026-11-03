@@ -121,6 +121,12 @@
       "title": "Paste preview",
       "description": "Mostra acima do prompt uma miniatura de cada imagem colada, antes do envio. A imagem aparece no kitty e no Ghostty; nos outros terminais, so o nome e o tamanho.",
       "default": true
+    },
+    "mediaStrip": {
+      "type": "boolean",
+      "title": "Media strip",
+      "description": "Mostra miniaturas clicaveis da midia gerada ou entregue (prints, imagens, GIFs, videos) sob a ferramenta que a gerou. Funciona no Terminal do macOS e no Windows com blocos coloridos.",
+      "default": true
     }
   }
 }

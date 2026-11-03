@@ -1,8 +1,9 @@
 import type { On } from 'claude-code'
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
 import { MediaRegistry, PixelCache, decodeBmp, drawMediaStrip, findCandidates, isGenerated, mediaKindOf, rasterCells, thumbColumns, toRgba, type MediaItem } from '../hooks/media'
+import { runResult } from './clipboard-env'
 import { PS_THUMB, psThumbPath, decodeSteps, openArgv, platformOf, thumbBmpPath, thumbSteps } from '../hooks/media-os'
 
 const cwd = '/proj'
@@ -311,4 +312,251 @@ test('platformOf e thumbBmpPath', async () => {
   expect(thumbBmpPath(od, '/a/x.png', 1)).toBe(thumbBmpPath(od, '/a/x.png', 1))
   expect(thumbBmpPath(od, '/a/x.png', 1)).not.toBe(thumbBmpPath(od, '/a/x.png', 2))
   expect(thumbBmpPath(od, '/a/x.png', 1)).toMatch(/^\/tmp\/o\/thumb-[0-9a-f]{8}\.bmp$/)
+})
+
+// --- Task 4: faixa ligada nos hooks ---
+
+const MDIR = '/tmp/neon-hud-media-sid'
+const NOW = 1_000_000
+
+// BMP 16x12 de 24 bits, o que o sips simulado "grava".
+const thumbBmp = (): string => {
+  const w = 16
+  const h = 12
+  const stride = w * 3
+  const b = new Uint8Array(54 + stride * h)
+  const v = new DataView(b.buffer)
+  b[0] = 0x42
+  b[1] = 0x4d
+  v.setUint32(2, b.length, true)
+  v.setUint32(10, 54, true)
+  v.setUint32(14, 40, true)
+  v.setInt32(18, w, true)
+  v.setInt32(22, h, true)
+  v.setUint16(26, 1, true)
+  v.setUint16(28, 24, true)
+  b.fill(0x80, 54)
+  return btoa(String.fromCharCode(...b))
+}
+
+type World = { runs: string[][]; writes: { path: string; text: string }[] }
+
+// files: caminho -> mtime; o resto nega com ENOENT. run decide a resposta de cada process.run.
+const world = (on: On, files: Record<string, number> = {}, env: Record<string, string> = {}, run?: (argv: readonly string[]) => unknown): World => {
+  const w: World = { runs: [], writes: [] }
+  on('session.id', () => ({ value: 'sid' }))
+  mock.env(on, { TMPDIR: '/tmp', HOME: '/Users/will', TERM_PROGRAM: 'Apple_Terminal', ...env })
+  on('fs.stat', (_, e) => {
+    if (e.path === '/usr/bin/sips') return { value: { kind: 'file' as const, size: 1, mtimeMs: 0, isLink: false } }
+    const m = files[e.path]
+    return m === undefined ? { deny: 'ENOENT' } : { value: { kind: 'file' as const, size: 10, mtimeMs: m, isLink: false } }
+  })
+  on('fs.write', (_, e) => {
+    w.writes.push({ path: e.path, text: e.text })
+    return { value: undefined }
+  })
+  on('fs.read', (_, e) => (e.path.endsWith('.bmp') && w.runs.some(a => a.includes(e.path)) ? { value: { base64: thumbBmp() } } : { deny: 'ENOENT' }) as never)
+  on('process.run', (_, e) => {
+    w.runs.push([...e.argv])
+    return (run?.(e.argv) ?? runResult(0)) as never
+  })
+  return w
+}
+
+const engineText = (on: On) =>
+  on('ui.render', ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>engine</Text>
+  })
+
+const use = (tool: string, input: unknown, id: string) => ({ plugin: 'neon-hud', surface: 'terminal' as const, component: 'ToolUse' as const, props: { tool_use_id: id, tool, input, isRunning: false, isErrored: false, isInterrupted: false } })
+const res = (tool: string, output: unknown, id: string, isErrored = false) => ({ plugin: 'neon-hud', surface: 'terminal' as const, component: 'ToolResult' as const, props: { tool_use_id: id, tool, output, isErrored }, viewport: { columns: 100, rows: 40 } })
+
+const labels = async (ui: { findAll: (q: { type: string }) => Promise<{ props: Record<string, unknown> }[]> }) => (await ui.findAll({ type: 'Button' })).map(b => b.props.label)
+
+test('faixa: print do Chrome decodifica o base64 e vira Raster', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  engineText(on)
+  const w = world(on)
+  const output = [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'AAAA' } }]
+  const row = await $.ui.mount(use('mcp__claude-in-chrome__computer', { action: 'screenshot' }, 'c-1'))
+  const ui = await $.ui.mount(res('mcp__claude-in-chrome__computer', output, 'c-1'))
+  expect(await ui.find({ type: 'Text', text: 'carregando…' })).toBeDefined()
+  expect(w.writes).toContainEqual({ path: `${MDIR}/emb-1.b64`, text: 'AAAA' })
+  await clock.settle()
+  expect(w.runs).toContainEqual(['base64', '-D', '-i', `${MDIR}/emb-1.b64`, '-o', `${MDIR}/emb-1.jpg`])
+  expect(w.runs.some(a => a[0] === 'sips' && a.includes(`${MDIR}/emb-1.jpg`))).toBe(true)
+  expect(await ui.find({ type: 'Raster' })).toBeDefined()
+  expect(await labels(ui)).toEqual(['[1] emb-1.jpg'])
+  expect(await ui.find({ type: 'Text', text: 'engine' })).toBeDefined()
+  await ui.unmount()
+  await row.unmount()
+})
+
+test('faixa: SendUserFile com tres GIFs numera de 1 a 3', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  engineText(on)
+  world(on, { '/a/1.gif': 1, '/a/2.gif': 1, '/a/3.gif': 1 })
+  const row = await $.ui.mount(use('SendUserFile', { files: ['/a/1.gif', '/a/2.gif', '/a/3.gif'] }, 's-1'))
+  const ui = await $.ui.mount(res('SendUserFile', '3 files delivered', 's-1'))
+  await clock.settle()
+  expect(await labels(ui)).toEqual(['[1] 1.gif', '[2] 2.gif', '[3] 3.gif'])
+  expect(await ui.find({ type: 'Text', text: '3 arquivos' })).toBeDefined()
+  await ui.unmount()
+  await row.unmount()
+})
+
+test('faixa: Bash mostra so o arquivo com mtime dentro da janela do tool.call', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  engineText(on)
+  world(on, { '/a/novo.png': NOW, '/a/velho.png': 1 })
+  let id = ''
+  on('tool.call', (_, e) => {
+    id = e.tool_use_id
+    return { result: { stdout: '/a/novo.png /a/velho.png', stderr: '' }, text: 'ok' } as never
+  })
+  await $.tool.call({ tool: 'Bash', command: 'python gerar.py' } as never)
+  expect(id).not.toBe('')
+  const ui = await $.ui.mount(res('Bash', { stdout: '/a/novo.png /a/velho.png', stderr: '' }, id))
+  await clock.settle()
+  expect(await labels(ui)).toEqual(['[1] novo.png'])
+  await ui.unmount()
+})
+
+test('faixa: Bash sem janela (sessao retomada) nao mostra nada', async ($, on) => {
+  mock.clock(on, { now: NOW })
+  engineText(on)
+  world(on, { '/a/novo.png': NOW })
+  const row = await $.ui.mount(use('Bash', { command: 'python gerar.py' }, 'b-0'))
+  const ui = await $.ui.mount(res('Bash', { stdout: '/a/novo.png', stderr: '' }, 'b-0'))
+  expect(await ui.find({ type: 'Text', text: 'MEDIA' })).toBeUndefined()
+  await ui.unmount()
+  await row.unmount()
+})
+
+test('faixa: Read de imagem nunca desenha faixa', async ($, on) => {
+  mock.clock(on, { now: NOW })
+  engineText(on)
+  world(on, { '/a/x.png': NOW })
+  const row = await $.ui.mount(use('Read', { file_path: '/a/x.png' }, 'r-1'))
+  const ui = await $.ui.mount(res('Read', [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } }], 'r-1'))
+  expect(await ui.find({ type: 'Text', text: 'MEDIA' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'engine' })).toBeDefined()
+  await ui.unmount()
+  await row.unmount()
+})
+
+test('faixa: arquivo removido mostra a legenda apagada', async ($, on) => {
+  mock.clock(on, { now: NOW })
+  engineText(on)
+  world(on)
+  const row = await $.ui.mount(use('SendUserFile', { files: ['/a/x.gif'] }, 'm-1'))
+  const ui = await $.ui.mount(res('SendUserFile', 'delivered', 'm-1'))
+  expect(await ui.find({ type: 'Text', text: '[1] x.gif · arquivo removido' })).toBeDefined()
+  await ui.unmount()
+  await row.unmount()
+})
+
+test('faixa: o mesmo arquivo em duas chamadas aparece so na primeira', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  engineText(on)
+  world(on, { '/a/x.gif': 5 })
+  const r1 = await $.ui.mount(use('SendUserFile', { files: ['/a/x.gif'] }, 'd-1'))
+  const u1 = await $.ui.mount(res('SendUserFile', 'ok', 'd-1'))
+  const r2 = await $.ui.mount(use('SendUserFile', { files: ['/a/x.gif'] }, 'd-2'))
+  const u2 = await $.ui.mount(res('SendUserFile', 'ok', 'd-2'))
+  await clock.settle()
+  expect(await labels(u1)).toEqual(['[1] x.gif'])
+  expect(await u2.find({ type: 'Text', text: 'MEDIA' })).toBeUndefined()
+  // Redesenhar a primeira nao repete o claim nem muda o numero.
+  await u1.redraw()
+  expect(await labels(u1)).toEqual(['[1] x.gif'])
+  for (const ui of [u1, r1, u2, r2]) await ui.unmount()
+})
+
+test('faixa: resultado com erro nao desenha faixa (Review Focus 3)', async ($, on) => {
+  mock.clock(on, { now: NOW })
+  engineText(on)
+  world(on, { '/a/novo.png': NOW })
+  let id = ''
+  on('tool.call', (_, e) => {
+    id = e.tool_use_id
+    return { result: { stdout: '/a/novo.png', stderr: '' }, text: 'ok' } as never
+  })
+  await $.tool.call({ tool: 'Bash', command: 'gerar' } as never)
+  const ui = await $.ui.mount(res('Bash', { stdout: '/a/novo.png', stderr: 'boom' }, id, true))
+  expect(await ui.find({ type: 'Text', text: 'MEDIA' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('faixa: conversor travado fica so na legenda, sem erro (Review Focus 4)', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  engineText(on)
+  world(on, { '/a/a.gif': 1 }, {}, () => ({ deny: 'Process timed out' }))
+  const row = await $.ui.mount(use('SendUserFile', { files: ['/a/a.gif'] }, 't-1'))
+  const ui = await $.ui.mount(res('SendUserFile', 'ok', 't-1'))
+  expect(await ui.find({ type: 'Text', text: 'carregando…' })).toBeDefined()
+  await clock.settle()
+  expect(await ui.find({ type: 'Raster' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'carregando…' })).toBeUndefined()
+  expect(await labels(ui)).toEqual(['[1] a.gif'])
+  expect(await ui.find({ type: 'Text', text: 'engine' })).toBeDefined()
+  await ui.unmount()
+  await row.unmount()
+})
+
+test('faixa: no Ghostty um PNG local usa o arquivo direto, sem conversor', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  engineText(on)
+  const w = world(on, { '/a/p.png': 1 }, { TERM_PROGRAM: 'ghostty' })
+  const row = await $.ui.mount(use('SendUserFile', { files: ['/a/p.png'] }, 'g-1'))
+  const ui = await $.ui.mount(res('SendUserFile', 'ok', 'g-1'))
+  await clock.settle()
+  expect((await ui.find({ type: 'Image' }))?.props.source).toMatchObject({ file: '/a/p.png' })
+  expect(w.runs).toEqual([])
+  await ui.unmount()
+  await row.unmount()
+})
+
+test('faixa: mediaStrip desligado deixa o desenho como hoje', { options: { mediaStrip: false } }, async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  engineText(on)
+  const w = world(on, { '/a/1.gif': 1 })
+  const row = await $.ui.mount(use('SendUserFile', { files: ['/a/1.gif'] }, 'o-1'))
+  const ui = await $.ui.mount(res('SendUserFile', 'ok', 'o-1'))
+  await clock.settle()
+  expect(await ui.find({ type: 'Text', text: 'MEDIA' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'engine' })).toBeDefined()
+  expect(w.writes).toEqual([])
+  expect(w.runs).toEqual([])
+  await ui.unmount()
+  await row.unmount()
+})
+
+test('faixa: ToolGroup recolhido junta as midias das chamadas sob o grupo', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  engineText(on)
+  world(on, { '/a/1.gif': 1, '/a/2.gif': 1 })
+  const calls = [
+    { tool_use_id: 'gr-1', tool: 'SendUserFile', input: { files: ['/a/1.gif'] }, isRunning: false, isErrored: false, isInterrupted: false, output: 'ok' },
+    { tool_use_id: 'gr-2', tool: 'SendUserFile', input: { files: ['/a/2.gif'] }, isRunning: false, isErrored: false, isInterrupted: false, output: 'ok' },
+  ]
+  const ui = await $.ui.mount({ plugin: 'neon-hud', surface: 'terminal', component: 'ToolGroup', props: { calls, isActive: false, isExpanded: false }, viewport: { columns: 100, rows: 40 } })
+  await clock.settle()
+  expect(await labels(ui)).toEqual(['[1] 1.gif', '[2] 2.gif'])
+  expect(await ui.findAll({ type: 'Text', text: 'MEDIA' })).toHaveLength(1)
+  await ui.unmount()
+})
+
+test('faixa: com toolRows desligado a faixa ainda envolve o desenho do engine', { options: { toolRows: false } }, async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  engineText(on)
+  world(on, { '/a/1.gif': 1 })
+  const row = await $.ui.mount(use('SendUserFile', { files: ['/a/1.gif'] }, 'tr-1'))
+  const ui = await $.ui.mount(res('SendUserFile', 'ok', 'tr-1'))
+  await clock.settle()
+  expect(await labels(ui)).toEqual(['[1] 1.gif'])
+  expect(await ui.find({ type: 'Text', text: 'engine' })).toBeDefined()
+  await ui.unmount()
+  await row.unmount()
 })
