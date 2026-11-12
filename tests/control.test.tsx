@@ -42,6 +42,27 @@ test('o card MODEL mostra opus, sonnet e haiku como opcoes, com a atual marcada'
   await ui.unmount()
 })
 
+test('o card MODEL mostra fable quando o /model oferece', async ($, on) => {
+  on('config.list', () => ({ value: [{ ...MODEL_ROW, value: 'fable', options: [...MODEL_ROW.options, 'fable'] }] }) as never)
+  on('session.start', () => ({ cwd: '/tmp' }))
+  on('session.id', () => ({ value: 'control-test' }) as never)
+  await $.session.start(START)
+  const ui = await $.ui.mount({ plugin: 'neon-hud', surface: 'terminal', ...PANE })
+  expect(textOf(await ui.find({ type: 'Button', key: 'model:fable' }))).toContain('●')
+  expect(textOf(await ui.find({ type: 'Button', key: 'model:opus' }))).toContain('○')
+  await ui.unmount()
+})
+
+test('sem fable nas opcoes do /model, o card nao mostra fable', async ($, on) => {
+  on('config.list', () => ({ value: [MODEL_ROW] }) as never)
+  on('session.start', () => ({ cwd: '/tmp' }))
+  on('session.id', () => ({ value: 'control-test' }) as never)
+  await $.session.start(START)
+  const ui = await $.ui.mount({ plugin: 'neon-hud', surface: 'terminal', ...PANE })
+  expect(await ui.find({ type: 'Button', key: 'model:fable' })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('um modelo com sufixo marca a familia dele', async ($, on) => {
   on('config.list', () => ({ value: [{ ...MODEL_ROW, value: 'opus[1m]' }] }) as never)
   on('session.start', () => ({ cwd: '/tmp' }))

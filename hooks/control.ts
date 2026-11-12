@@ -6,7 +6,8 @@ import type { HudControl } from '../types'
 export const EFFORTS: readonly ModelEffort[] = ['low', 'medium', 'high', 'xhigh', 'max']
 
 // O card oferece so as familias; `opus[1m]`, `default` e afins continuam no /model.
-export const MODEL_FAMILIES = ['opus', 'sonnet', 'haiku'] as const
+// Uma familia so aparece se o /model a oferecer (fable depende da conta e da versao do CLI).
+export const MODEL_FAMILIES = ['fable', 'opus', 'sonnet', 'haiku'] as const
 
 export function familyOf(model: string): string | undefined {
   return MODEL_FAMILIES.find(f => model.includes(f))
