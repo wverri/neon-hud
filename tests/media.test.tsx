@@ -4,6 +4,7 @@ import type { TestBody } from 'claude-code/testing'
 
 import { MediaRegistry, PixelCache, decodeBmp, drawMediaStrip, findCandidates, isGenerated, mediaKindOf, rasterCells, thumbColumns, toRgba, type MediaItem } from '../hooks/media'
 import { runResult } from './clipboard-env'
+import { runCalls, world as turnWorld } from './turn-world'
 import { PS_THUMB, psThumbPath, decodeSteps, openArgv, platformOf, thumbBmpPath, thumbSteps } from '../hooks/media-os'
 
 const cwd = '/proj'
@@ -19,6 +20,13 @@ test('mediaKindOf decide pela extensao sem diferenciar maiusculas', async () => 
 
 test('Read nunca gera candidato', async () => {
   expect(findCandidates('Read', { file_path: '/a/x.png' }, 'ok /a/y.png', cwd, home)).toEqual([])
+})
+
+test('REPL: o codigo do script nao vira midia; as imagens que ele devolve viram', () => {
+  expect(findCandidates('REPL', { code: "await Read({ file_path: '/a/x.png' })", description: 'ver /a/y.png' }, { stdout: '', stderr: '' }, cwd, home)).toEqual([])
+  const out = findCandidates('REPL', { code: 'shot()' }, { stdout: 'salvo em /a/z.png', stderr: '', images: [{ base64: 'AAAA', mediaType: 'image/png' }] }, cwd, home)
+  expect(out).toContainEqual({ kind: 'local', path: '/a/z.png', media: 'image', always: false })
+  expect(out).toContainEqual({ kind: 'embedded', base64: 'AAAA', ext: 'png' })
 })
 
 test('SendUserFile entrega todos os arquivos, sempre', async () => {
@@ -426,7 +434,7 @@ const world = (on: On, files: Record<string, number> = {}, env: Record<string, s
     w.stats.push(e.path)
     if (e.path === '/usr/bin/sips') return { value: { kind: 'file' as const, size: 1, mtimeMs: 0, isLink: false } }
     // O harness resolve caminho Windows contra o cwd do host: a chave vale tambem como sufixo.
-    const m = files[e.path] ?? Object.entries(files).find(([k]) => !k.startsWith('/') && e.path.endsWith(`/${k}`))?.[1]
+    const m = files[e.path] ?? Object.entries(files).find(([k]) => (k.startsWith('/') ? e.path.replace(/\\/g, '/').replace(/^[A-Za-z]:/, '') === k : e.path.endsWith(`/${k}`)))?.[1]
     return m === undefined ? { deny: 'ENOENT' } : { value: { kind: 'file' as const, size: 10, mtimeMs: m, isLink: false } }
   })
   on('fs.write', (_, e) => {
@@ -485,17 +493,12 @@ test('faixa: SendUserFile com tres GIFs numera de 1 a 3', async ($, on) => {
   await row.unmount()
 })
 
-test('faixa: Bash mostra so o arquivo com mtime dentro da janela do tool.call', async ($, on) => {
+test('faixa: Bash mostra so o arquivo com mtime dentro da janela da chamada', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   engineText(on)
   world(on, { '/a/novo.png': NOW, '/a/velho.png': 1 })
-  let id = ''
-  on('tool.call', (_, e) => {
-    id = e.tool_use_id
-    return { result: { stdout: '/a/novo.png /a/velho.png', stderr: '' }, text: 'ok' } as never
-  })
-  await $.tool.call({ tool: 'Bash', command: 'python gerar.py' } as never)
-  expect(id).not.toBe('')
+  const id = 'b-1'
+  await runCalls($, turnWorld(on, { clock: false }), [{ id, name: 'Bash' }])
   const ui = await $.ui.mount(res('Bash', { stdout: '/a/novo.png /a/velho.png', stderr: '' }, id))
   await clock.settle()
   expect(await labels(ui)).toEqual(['[1] novo.png'])
@@ -558,12 +561,8 @@ test('faixa: resultado com erro nao desenha faixa (Review Focus 3)', async ($, o
   mock.clock(on, { now: NOW })
   engineText(on)
   world(on, { '/a/novo.png': NOW })
-  let id = ''
-  on('tool.call', (_, e) => {
-    id = e.tool_use_id
-    return { result: { stdout: '/a/novo.png', stderr: '' }, text: 'ok' } as never
-  })
-  await $.tool.call({ tool: 'Bash', command: 'gerar' } as never)
+  const id = 'b-2'
+  await runCalls($, turnWorld(on, { clock: false }), [{ id, name: 'Bash' }])
   const ui = await $.ui.mount(res('Bash', { stdout: '/a/novo.png', stderr: 'boom' }, id, true))
   expect(await ui.find({ type: 'Text', text: 'MEDIA' })).toBeUndefined()
   await ui.unmount()

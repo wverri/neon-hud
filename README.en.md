@@ -175,6 +175,7 @@ claude plugin uninstall neon-hud@neon-hud
 - Counters for tokens, requests and tok/s are saved per session. They survive a mod reload, a Claude Code restart and `--resume`, and reset on `/clear`. If you install in the middle of a session, they count from that point. Cost, context, model and turns always show the real value since the session began.
 - The 5h and 7d limits only appear on subscription plans that report them.
 - The mod never blocks or changes prompts or tool calls, and sends nothing to the model. It only changes how the session looks on screen.
+- It works with Claude Code's Code Mode (`CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1`). Tools are read from the response stream and the transcript, with no `tool.call` hook, which would make Code Mode refuse the calls made inside scripts. In Code Mode each script counts as one `REPL` call (its row shows `Ran script` and the description); the calls made inside it don't reach the Tools card, and `Poll` isn't counted.
 - External programs: `osascript` (macOS) or `copyq` (Linux), only when you click `⧉ html`, and `ratex-render` when `latex` is on. No network access. The image preview only lists folders and reads the size of pasted image files; the terminal reads the image itself.
 
 ## Development

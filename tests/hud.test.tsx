@@ -1,4 +1,5 @@
 import { expect, test } from 'claude-code/testing'
+import { runCalls, world } from './turn-world'
 
 const PANE = {
   component: 'Pane',
@@ -24,8 +25,7 @@ test('o HUD desenha o cabecalho e o estado ocioso em toda superficie', async $ =
 })
 
 test('uma chamada de ferramenta aparece na contagem de TOOLS', async ($, on) => {
-  on('tool.call', () => ({ result: { file: { content: '' } }, text: 'ok' }) as never)
-  await $.tool.call({ tool: 'Read', file_path: '/tmp/x.md' })
+  await runCalls($, world(on), [{ id: 'c1', name: 'Read' }])
   const ui = await $.ui.mount({ plugin: 'neon-hud', surface: 'terminal', ...PANE })
   expect(await ui.find({ type: 'Text', text: /1 calls/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^Read/ })).toBeDefined()
@@ -33,9 +33,7 @@ test('uma chamada de ferramenta aparece na contagem de TOOLS', async ($, on) => 
 })
 
 test('nenhuma linha passa da largura util do painel', async ($, on) => {
-  on('tool.call', () => ({ result: { file: { content: '' } }, text: 'ok' }) as never)
-  for (let i = 0; i < 9; i++) await $.tool.call({ tool: 'Read', file_path: '/tmp/x.md' })
-  await $.tool.call({ tool: 'Bash', command: 'true' } as never)
+  await runCalls($, world(on), [...Array.from({ length: 9 }, (_, i) => ({ id: `r${i}`, name: 'Read' })), { id: 'b1', name: 'Bash' }])
   for (const bodyColumns of [32, 44, 60]) {
     const ui = await $.ui.mount({
       plugin: 'neon-hud',
@@ -53,8 +51,7 @@ test('nenhuma linha passa da largura util do painel', async ($, on) => {
 })
 
 test('chamadas repetidas aparecem agrupadas em recent', async ($, on) => {
-  on('tool.call', () => ({ result: { file: { content: '' } }, text: 'ok' }) as never)
-  for (let i = 0; i < 3; i++) await $.tool.call({ tool: 'Read', file_path: '/tmp/x.md' })
+  await runCalls($, world(on), [0, 1, 2].map(i => ({ id: `r${i}`, name: 'Read' })))
   const ui = await $.ui.mount({ plugin: 'neon-hud', surface: 'terminal', ...PANE })
   expect(await ui.find({ type: 'Text', text: /recent ✓Read×3/ })).toBeDefined()
   await ui.unmount()
