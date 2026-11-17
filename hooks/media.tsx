@@ -88,6 +88,14 @@ const outputTexts = (output: unknown, texts: string[], embedded: Candidate[]): v
       return
     }
     for (const key of ['text', 'stdout', 'stderr'] as const) if (typeof output[key] === 'string') texts.push(output[key])
+    // Resultado do REPL: as imagens das chamadas de dentro do script, { base64, mediaType }.
+    if (Array.isArray(output.images)) {
+      for (const img of output.images) {
+        if (!isRecord(img) || typeof img.base64 !== 'string' || img.base64 === '') continue
+        const ext = typeof img.mediaType === 'string' ? EMBED_EXT[img.mediaType.toLowerCase()] : undefined
+        if (ext !== undefined) embedded.push({ kind: 'embedded', base64: img.base64, ext })
+      }
+    }
     // Resultado de MCP: { content: McpContentBlock[], isError, structuredContent? }.
     for (const key of ['content', 'structuredContent'] as const) if (Array.isArray(output[key])) outputTexts(output[key], texts, embedded)
   }
@@ -113,7 +121,9 @@ export function findCandidates(tool: string, input: unknown, output: unknown, cw
   }
 
   if (isRecord(input)) {
-    for (const value of Object.values(input)) {
+    // O codigo de um script do Code Mode cita caminhos sem gerar nada; o que ele gera sai na saida.
+    for (const [key, value] of Object.entries(input)) {
+      if (tool === 'REPL' && (key === 'code' || key === 'description')) continue
       if (typeof value === 'string') {
         const hits: Hit[] = []
         scanText(value, cwd, home, hits)

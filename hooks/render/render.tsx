@@ -640,6 +640,7 @@ export type ToolRow = { tool: string; input: unknown; isRunning: boolean; isErro
 const VERBS: Record<string, string> = {
   Bash: 'Ran', PowerShell: 'Ran', Read: 'Read', Write: 'Wrote', Edit: 'Edited', MultiEdit: 'Edited', NotebookEdit: 'Edited',
   Grep: 'Searched', Glob: 'Listed', WebFetch: 'Fetched', WebSearch: 'Searched the web for', Agent: 'Delegated', Task: 'Delegated',
+  REPL: 'Ran script',
 }
 
 const field = (input: unknown, ...keys: string[]): string | undefined => {

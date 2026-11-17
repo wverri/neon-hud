@@ -22,6 +22,8 @@ import { drawPasteBand, extractImageIds, sameIds, tmpBases } from './paste'
 import type { MediaItem } from './media'
 import { MediaRegistry, PixelCache, THUMB_ROWS, decodeBmp, drawMediaStrip, findCandidates, isGenerated } from './media'
 import type { Platform } from './media-os'
+import type { StartedCall, ToolTracker } from './tracker'
+import { newToolTracker, primeTools, requestCalls, settleCalls, settleLoop, startCalls, toolKey } from './tracker'
 import { PS_THUMB, decodeSteps, joinPath, openArgv, platformOf, psThumbPath, thumbBmpPath, thumbSteps } from './media-os'
 
 const live = atom({ plugin: 'neon-hud', key: 'live' } as const, {
@@ -602,6 +604,31 @@ const pressMedia = async ($: EngineInterface, m: MediaState, n: number): Promise
   if (!text.startsWith('Abrindo')) $.ui.toast(text)
 }
 
+type ToolWatch = { tracker: ToolTracker; mediaOn: boolean; media: MediaState }
+
+// O passo novo leva os resultados do anterior: as chamadas dele ja estao no transcript.
+async function settleTools($: EngineInterface, watch: ToolWatch, agentId: string | undefined): Promise<void> {
+  try {
+    const s = await settleLoop($, watch.tracker, agentId, true)
+    if (s.settled.length === 0 && s.closed.size === 0) return
+    await update($, tools, t => settleCalls(t, s.settled, s.closed))
+    if (!watch.mediaOn) return
+    const { windows, inputs } = watch.media
+    const now = await $.clock.now()
+    for (const c of s.settled) {
+      keepLast(inputs, c.id, s.inputs.get(c.id)!)
+      const w = windows.get(c.id)
+      keepLast(windows, c.id, w ? { ...w, end: w.end ?? now } : { start: s.stepEnd, end: now })
+    }
+    for (const id of s.closed) {
+      const w = windows.get(id)
+      if (w && w.end === undefined) keepLast(windows, id, { ...w, end: now })
+    }
+  } catch {
+    // Sem transcript o painel so deixa de fechar as chamadas; o turno segue igual.
+  }
+}
+
 export const register: Register = (on, options: PluginOptions) => {
   const rendering = options.render !== false
   const style = resolveStyle(options)
@@ -614,6 +641,8 @@ export const register: Register = (on, options: PluginOptions) => {
   const mediaOn = options.mediaStrip !== false
   const media = newMediaState(style)
   const { windows, inputs } = media
+  const tracker = newToolTracker()
+  const watch: ToolWatch = { tracker, mediaOn, media }
 
   on('session.start', async ($, e, next) => {
     await $.command
@@ -744,12 +773,14 @@ export const register: Register = (on, options: PluginOptions) => {
     await update($, tokens, t => ({ ...t, turns: t.turns + 1 }))
     // Um /model digitado entre turnos muda a linha do /config: o seletor acompanha.
     if (e.agentId === undefined) void refreshControl($).catch(() => {})
+    await primeTools($, tracker).catch(() => {})
 
     return next(e)
   })
 
   on('turn.step', async function* ($, e, next) {
     const isMain = e.agentId === undefined
+    await settleTools($, watch, e.agentId)
     if (isMain) {
       await update($, live, (s): HudLive => ({ ...s, model: e.model, phase: 'UPLINK' }))
       await noteEffort($, e.effort)
@@ -759,9 +790,12 @@ export const register: Register = (on, options: PluginOptions) => {
     let chars = 0
     let chunks = 0
     let phase: HudPhase = 'UPLINK'
+    const asked: StartedCall[] = []
 
     for await (const chunk of next(e)) {
       yield chunk
+
+      if (chunk.kind === 'tool') asked.push({ id: chunk.id, tool: chunk.name })
 
       if (chunk.kind === 'text' || chunk.kind === 'thinking' || chunk.kind === 'input') {
         chars += chunk.kind === 'input' ? chunk.json.length : chunk.text.length
@@ -800,45 +834,18 @@ export const register: Register = (on, options: PluginOptions) => {
         }
       }
     }
-  })
 
-  on('tool.call', async ($, e, next) => {
-    const tool = String(e.tool).replace(/^mcp__/, '')
-    const id = e.tool_use_id
-    await update($, tools, t => ({
-      total: t.total + 1,
-      counts: { ...t.counts, [tool]: (t.counts[tool] ?? 0) + 1 },
-      recent: [...t.recent, { id, tool, isDone: false, isError: false }].slice(-24),
-    }))
-    if (e.agentId === undefined) {
-      await update($, live, (s): HudLive => ({ ...s, phase: 'EXEC', detail: tool }))
+    if (asked.length > 0) {
+      const now = await $.clock.now()
+      const fresh = requestCalls(tracker, e.agentId, asked, now)
+      if (fresh.length > 0) await update($, tools, t => startCalls(t, fresh))
+      if (mediaOn) for (const c of fresh) keepLast(windows, c.id, { start: now })
+      if (isMain) await update($, live, (s): HudLive => ({ ...s, phase: 'EXEC', detail: toolKey(asked[asked.length - 1]!.tool) }))
     }
-
-    // A faixa so mede o tempo aqui: nada disso pode mudar ou atrasar o resultado.
-    if (mediaOn) {
-      try {
-        const { tool: name, tool_use_id: _id, agentId: _agent, ...input } = e as unknown as Record<string, unknown>
-        keepLast(windows, id, { start: await $.clock.now() })
-        keepLast(inputs, id, { tool: String(name), input })
-      } catch {
-        // Sem janela a faixa so mostra entregas explicitas; a chamada segue igual.
-      }
-    }
-    const ran = await next(e)
-    if (mediaOn) {
-      const w = windows.get(id)
-      if (w) w.end = await $.clock.now().catch(() => w.start)
-    }
-    const isError = 'isError' in ran && ran.isError === true
-    await update($, tools, t => ({
-      ...t,
-      recent: t.recent.map(c => (c.id === id ? { ...c, isDone: true, isError } : c)),
-    }))
-
-    return ran
   })
 
   on('turn.complete', async ($, e, next) => {
+    await settleTools($, watch, e.agentId)
     if (e.agentId === undefined) {
       const usage = await $.session.usage()
       await update($, turn, s => ({

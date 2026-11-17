@@ -304,6 +304,14 @@ test('file tools show the path in the path color and failures say so', async $ =
   await ui.unmount()
 })
 
+test('a script do Code Mode vira Ran script com a descricao, sem o codigo', async $ => {
+  const ui = await $.ui.mount({ ...toolRow('REPL', { code: "await $('ls')", description: 'List the repo' }), surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /^Ran script$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^List the repo$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /await/ })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('toolRows off leaves tool rows to the engine', { options: { toolRows: false } }, async ($, on) => {
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)
