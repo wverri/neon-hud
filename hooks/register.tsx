@@ -19,6 +19,7 @@ import type { Style } from './render/theme'
 import { resolveStyle } from './render/theme'
 import type { PastedImage } from './paste'
 import { drawPasteBand, extractImageIds, sameIds, tmpBases } from './paste'
+import { countCardLines, drawMemHeader, isMemCard, memCardKey, toggleOpen } from './memcard'
 import type { MediaItem } from './media'
 import { MediaRegistry, PixelCache, THUMB_ROWS, decodeBmp, drawMediaStrip, findCandidates, isGenerated } from './media'
 import type { Platform } from './media-os'
@@ -100,6 +101,8 @@ type Typeset = Exclude<Formula, { error: true }> & { tex: string }
 const formulas = atom({ plugin: 'neon-hud', key: 'render-formulas' } as const, {})
 
 const latexDir = atom({ plugin: 'neon-hud', key: 'render-dir' } as const, '')
+
+const memOpen = atom({ plugin: 'neon-hud', key: 'mem-open' } as const, [] as string[])
 
 const pasteIds = atom({ plugin: 'neon-hud', key: 'paste-ids' } as const, [] as number[])
 
@@ -643,6 +646,28 @@ export const register: Register = (on, options: PluginOptions) => {
   const { windows, inputs } = media
   const tracker = newToolTracker()
   const watch: ToolWatch = { tracker, mediaOn, media }
+
+  // Banner do claude-mem: uma linha destacada que expande e recolhe o card que ele poe no transcript.
+  // O hook precisa estar acima do claude-mem na cadeia para receber o card em next(e).
+  if (options.memCard !== false) {
+    on('ui.render', { component: 'Placed' }, async ($, e, next) => {
+      if (e.surface !== 'terminal' || !isMemCard(e.props)) return next(e)
+      const card = await next(e)
+      if (card === null || card === undefined) return card
+      const key = memCardKey(e.props.id)
+      const isOpen = (await read($, memOpen)).includes(key)
+      const el = $.ui.resolve(e) as ElementTable<'terminal'>
+      const header = drawMemHeader(el, key, isOpen, countCardLines(card), () => void update($, memOpen, open => toggleOpen(open, key)))
+      return isOpen ? (
+        <el.Box flexDirection="column">
+          {header}
+          {card}
+        </el.Box>
+      ) : (
+        header
+      )
+    }).catch(async ($, e, next) => next(e))
+  }
 
   on('session.start', async ($, e, next) => {
     await $.command

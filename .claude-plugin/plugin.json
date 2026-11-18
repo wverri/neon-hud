@@ -128,6 +128,12 @@
       "title": "Media strip",
       "description": "Mostra miniaturas clicaveis da midia gerada ou entregue (prints, imagens, GIFs, videos) sob a ferramenta que a gerou. Funciona no Terminal do macOS e no Windows com blocos coloridos.",
       "default": true
+    },
+    "memCard": {
+      "type": "boolean",
+      "title": "claude-mem card",
+      "description": "Recolhe o banner que o claude-mem mostra no inicio da sessao e na compactacao numa linha CLAUDE-MEM destacada. Clique (ou ctrl+x tab e Enter) para expandir e recolher. Desligado, o card aparece inteiro.",
+      "default": true
     }
   }
 }

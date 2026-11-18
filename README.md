@@ -89,6 +89,7 @@ Todas as opções ficam em `~/.claude/settings.json` (ou em `/config`); depois, 
 | `highlightPaths` | `true`, `false` | `true` | Colore caminhos como `~/src/app.ts`. |
 | `pastePreview` | `true`, `false` | `true` | Miniatura de cada imagem colada acima do prompt, antes do envio. |
 | `mediaStrip` | `true`, `false` | `true` | Mostra miniaturas clicáveis da mídia gerada ou entregue (prints, imagens, GIFs, vídeos) sob a ferramenta que a gerou. Funciona no Terminal do macOS e no Windows com blocos coloridos. |
+| `memCard` | `true`, `false` | `true` | Recolhe o banner do claude-mem (início de sessão e compactação) numa linha **CLAUDE-MEM** destacada. Clique, ou ctrl+x tab e Enter, para expandir e recolher. |
 
 ### Junto com o prismantis
 

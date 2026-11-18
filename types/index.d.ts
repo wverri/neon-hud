@@ -93,6 +93,7 @@ declare module 'claude-code' {
       'render-formulas': Record<string, unknown>
       'render-dir': string
       'paste-ids': number[]
+      'mem-open': string[]
     }
   }
 }

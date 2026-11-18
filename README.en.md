@@ -89,6 +89,7 @@ All options live in `~/.claude/settings.json` (or in `/config`). Run `/reload` a
 | `highlightPaths` | `true`, `false` | `true` | Colors paths such as `~/src/app.ts`. |
 | `pastePreview` | `true`, `false` | `true` | A thumbnail of each pasted image above the prompt, before sending. |
 | `mediaStrip` | `true`, `false` | `true` | Shows clickable thumbnails of generated or delivered media (screenshots, images, GIFs, videos) under the tool that produced it. Works in macOS Terminal and on Windows with colored blocks. |
+| `memCard` | `true`, `false` | `true` | Folds the claude-mem banner (session start and compaction) into one highlighted **CLAUDE-MEM** line. Click it, or ctrl+x tab and Enter, to expand and collapse. |
 
 ### Alongside prismantis
 
